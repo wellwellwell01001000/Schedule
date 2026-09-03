@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@layer base {
+  *, ::before, ::after {
+    border-radius: 0px !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    background-image: none !important;
+  }
+
+  html, body {
+    background-color: #000000;
+    color: #e5e5e5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar in monochrome */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #000000;
+    border: 1px solid #262626;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #525252;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a3a3a3;
+  }
+}

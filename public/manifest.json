@@ -1,0 +1,20 @@
+{
+  "id": "/Schedule/",
+  "name": "Alternating Routine Tracker",
+  "short_name": "RoutineTracker",
+  "description": "Monochrome Editorial Productivity Engine & Alternating Routine Tracker",
+  "start_url": "/Schedule/",
+  "scope": "/Schedule/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/Schedule/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
