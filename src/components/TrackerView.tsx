@@ -1339,29 +1339,6 @@ export function TrackerView({
               handleAdjustTime(taskId, mins);
             }}
           />
-
-          {/* Card 3: SCHEDULE BLUEPRINT QUICK SPECS */}
-          <div className="border border-white bg-black">
-            <div className="bg-white text-black text-xs px-4 py-1 font-bold">
-              _DAY_THEMED_SPEC
-            </div>
-
-            <div className="p-4 space-y-3 text-xs">
-              <div className="space-y-1">
-                <div className="text-[10px] opacity-60 uppercase">CORE RULE:</div>
-                <p className="text-white font-bold leading-snug">
-                  Alternating days reduces cognitive context switching from 6 fragmented daily subjects down to 2 deep focus blocks.
-                </p>
-              </div>
-
-              <div className="border-t border-white/20 pt-3 space-y-1.5 text-[11px] opacity-80">
-                <div>• A-Days: Mon / Wed / Fri (Creative &amp; Motor)</div>
-                <div>• B-Days: Tue / Thu (Technical &amp; Problem Solving)</div>
-                <div>• Saturdays: Dual-Skill Sprint (Cybersecurity)</div>
-                <div>• Sundays: Game Dev Studio (Godot / Unity)</div>
-              </div>
-            </div>
-          </div>
         </section>
       </div>
 
