@@ -13,7 +13,7 @@ const STORAGE_SYNC_CODE_KEY = 'routine_tracker_sync_code_v1';
 const STORAGE_LAST_SYNC_KEY = 'routine_drive_vault_last_sync_v1';
 
 // Default / fallback Webhook URL if pre-configured
-const DEFAULT_VAULT_URL = '';
+const DEFAULT_VAULT_URL = 'https://script.google.com/macros/s/AKfycbzaN3PKBczOIycME0s-nyJIk3EYW-u-Vs52t0CNlKx6kdQXeXzvZkh8oPk_5JDSjtbW/exec';
 
 /**
  * Returns the currently active Google Apps Script Webhook URL
@@ -140,6 +140,7 @@ export async function saveToDriveVault(
     // Use text/plain POST to avoid CORS preflight blocking in browsers
     const response = await fetch(scriptUrl, {
       method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(payload),
     });
 
