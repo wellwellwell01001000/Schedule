@@ -256,3 +256,81 @@ export function getAllUniqueRoutines(
 
   return routines;
 }
+
+/**
+ * Applies updates to a task in the schedule, handling both single-day and all-days scopes,
+ * and synchronizing recurrence across repeat days if modified.
+ */
+export function applyTaskEdit(
+  schedules: Record<string, DaySchedule>,
+  originalTask: TaskItem,
+  updatedFields: Partial<TaskItem>,
+  scope: 'today' | 'all',
+  currentDay: DayKey,
+  selectedRepeatDays?: DayKey[]
+): Record<string, DaySchedule> {
+  const updated: Record<string, DaySchedule> = { ...schedules };
+
+  if (scope === 'today') {
+    const sched = updated[currentDay];
+    if (sched) {
+      updated[currentDay] = {
+        ...sched,
+        tasks: sched.tasks.map((t) =>
+          t.id === originalTask.id
+            ? { ...t, ...updatedFields }
+            : t
+        ),
+      };
+    }
+  } else {
+    // Scope is 'all' - update across all matching days, or sync with selectedRepeatDays
+    const targetDays = selectedRepeatDays && selectedRepeatDays.length > 0
+      ? selectedRepeatDays
+      : (['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as DayKey[]);
+
+    const allDays: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+    for (const dKey of allDays) {
+      const sched = updated[dKey];
+      if (!sched) continue;
+
+      const hasTask = sched.tasks.some((t) => isSameRoutine(t, originalTask) || t.id === originalTask.id);
+      const shouldHaveTask = targetDays.includes(dKey);
+
+      if (hasTask && shouldHaveTask) {
+        // Update task on this day
+        updated[dKey] = {
+          ...sched,
+          tasks: sched.tasks.map((t) =>
+            isSameRoutine(t, originalTask) || t.id === originalTask.id
+              ? { ...t, ...updatedFields }
+              : t
+          ),
+        };
+      } else if (hasTask && !shouldHaveTask) {
+        // Routine was deselected from this day
+        updated[dKey] = {
+          ...sched,
+          tasks: sched.tasks.filter(
+            (t) => !(isSameRoutine(t, originalTask) || t.id === originalTask.id)
+          ),
+        };
+      } else if (!hasTask && shouldHaveTask) {
+        // Routine was added to this day
+        const newTask: TaskItem = {
+          ...originalTask,
+          ...updatedFields,
+          id: `task-${Date.now()}-${dKey}-${Math.random().toString(36).substring(2, 5)}`,
+        };
+        updated[dKey] = {
+          ...sched,
+          tasks: [...sched.tasks, newTask],
+        };
+      }
+    }
+  }
+
+  return updated;
+}
+

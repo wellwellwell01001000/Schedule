@@ -23,13 +23,30 @@ const DRIVE_FILE_NAME = 'routine_tracker_sync.json';
 const LOCAL_TOKEN_KEY = 'google_drive_access_token_v1';
 const LOCAL_TOKEN_EXPIRY_KEY = 'google_drive_token_expiry_v1';
 const LOCAL_LAST_SYNC_KEY = 'google_drive_last_sync_time';
+const LOCAL_CUSTOM_CLIENT_ID_KEY = 'google_drive_custom_client_id';
 
-// Read OAuth Client ID from firebase-applet-config.json
+// Default project OAuth Client ID configured for GitHub Pages and web deployments
+const DEFAULT_PROJECT_OAUTH_CLIENT_ID = '744036293318-9e34h7vvgelak91v84lp2khbe7acd6v0.apps.googleusercontent.com';
+
+// Read OAuth Client ID from local storage, firebase config, or project default
 let cachedClientId: string | null = null;
 export async function getOAuthClientId(): Promise<string> {
   if (cachedClientId) return cachedClientId;
+
+  // 1. Check custom user override if provided in settings
   try {
-    const res = await fetch('/firebase-applet-config.json');
+    const customId = localStorage.getItem(LOCAL_CUSTOM_CLIENT_ID_KEY);
+    if (customId && customId.trim()) {
+      cachedClientId = customId.trim();
+      return cachedClientId;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Try fetching config from static assets
+  try {
+    const res = await fetch('./firebase-applet-config.json');
     if (res.ok) {
       const config = await res.json();
       if (config.oAuthClientId) {
@@ -37,12 +54,36 @@ export async function getOAuthClientId(): Promise<string> {
         return config.oAuthClientId;
       }
     }
-  } catch (err) {
-    console.warn('Could not load firebase-applet-config.json:', err);
+  } catch {
+    // fallback
   }
-  // Fallback to configured OAuth Client ID
-  return '1003877035789-e0sa94616e36vlt5srbect0i9h3ejc47.apps.googleusercontent.com';
+
+  cachedClientId = DEFAULT_PROJECT_OAUTH_CLIENT_ID;
+  return cachedClientId;
 }
+
+export function setCustomOAuthClientId(clientId: string): void {
+  try {
+    if (clientId.trim()) {
+      localStorage.setItem(LOCAL_CUSTOM_CLIENT_ID_KEY, clientId.trim());
+      cachedClientId = clientId.trim();
+    } else {
+      localStorage.removeItem(LOCAL_CUSTOM_CLIENT_ID_KEY);
+      cachedClientId = null;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function getCustomOAuthClientId(): string {
+  try {
+    return localStorage.getItem(LOCAL_CUSTOM_CLIENT_ID_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
 
 // Get valid stored token if available
 export function getStoredAccessToken(): string | null {

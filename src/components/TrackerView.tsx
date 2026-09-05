@@ -10,10 +10,12 @@ import {
   applyDelete,
   descheduleAllForDay,
   restoreAllForDay,
+  applyTaskEdit,
   TaskDayMatch,
 } from '../utils/taskRecurrence';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
+import { EditTaskModal } from './EditTaskModal';
 
 interface TrackerViewProps {
   selectedDay: string;
@@ -24,26 +26,30 @@ interface TrackerViewProps {
   onOpenTemplates?: () => void;
 }
 
-// Helper to check if the current time falls inside a time slot like "07:00 – 08:10" or "19:15 - 20:45"
-function isCurrentTimeInSlot(timeStr: string): boolean {
+// Helper to parse time slot like "07:00 – 08:10" into start and end minutes from midnight
+function parseSlotMinutes(timeStr: string): { start: number; end: number } | null {
   try {
     const parts = timeStr.split(/[-–—]/).map((s) => s.trim());
-    if (parts.length !== 2) return false;
+    if (parts.length !== 2) return null;
     const [startStr, endStr] = parts;
     const [startH, startM] = startStr.split(':').map(Number);
     const [endH, endM] = endStr.split(':').map(Number);
-    if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return false;
-
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const startMinutes = startH * 60 + startM;
-    const endMinutes = endH * 60 + endM;
-
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return null;
+    return { start: startH * 60 + startM, end: endH * 60 + endM };
   } catch {
-    return false;
+    return null;
   }
 }
+
+// Helper to check if the current time falls inside a time slot like "07:00 – 08:10" or "19:15 - 20:45"
+function isCurrentTimeInSlot(timeStr: string): boolean {
+  const slot = parseSlotMinutes(timeStr);
+  if (!slot) return false;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return currentMinutes >= slot.start && currentMinutes <= slot.end;
+}
+
 
 export function TrackerView({
   selectedDay,
@@ -93,6 +99,10 @@ export function TrackerView({
   // Recurring Routines Manager Modal state & toast banner
   const [isManagerOpen, setIsManagerOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Edit Task Modal state
+  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Live Timer states: which task is currently running a live stopwatch
   const [activeTimerTaskId, setActiveTimerTaskId] = useState<string | null>(null);
@@ -288,6 +298,38 @@ export function TrackerView({
     onRefreshHistory();
   };
 
+  const handleOpenEditModal = (task: TaskItem, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
+    setEditingTask(task);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveTaskEdit = (
+    updatedFields: Partial<TaskItem>,
+    scope: 'today' | 'all',
+    selectedRepeatDays?: DayKey[]
+  ) => {
+    if (!editingTask) return;
+    const updatedSchedules = applyTaskEdit(
+      schedules,
+      editingTask,
+      updatedFields,
+      scope,
+      selectedDay as DayKey,
+      selectedRepeatDays
+    );
+
+    onUpdateSchedules(updatedSchedules);
+    const dayTasks = updatedSchedules[selectedDay]?.tasks || [];
+    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, dayTasks, completedTaskIds);
+    onRefreshHistory();
+
+    setToastMessage(`[TASK UPDATED]: "${updatedFields.title || editingTask.title}" updated.`);
+    setTimeout(() => setToastMessage(null), 4000);
+    setEditingTask(null);
+    setIsEditModalOpen(false);
+  };
+
   // Toggle Live Timer
   const handleToggleTimer = (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -362,20 +404,61 @@ export function TrackerView({
   const totalTasks = scheduledTasks.length;
   const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
 
-  // Active in-progress index among scheduled tasks
-  const activeTaskIndex = scheduledTasks.findIndex((t) => !completedTaskIds.includes(t.id));
+  // Uncompleted scheduled tasks
+  const pendingScheduledTasks = scheduledTasks.filter((t) => !completedTaskIds.includes(t.id));
 
-  // Determine what the user needs to do RIGHT NOW:
-  // 1. If a stopwatch/timer is running, that task is active right now.
-  // 2. If viewing today, check if real-time clock falls inside an uncompleted task's time slot.
-  // 3. Otherwise, target the immediate next pending task in sequence.
-  const matchedSlotTask = isToday
-    ? scheduledTasks.find((t) => !completedTaskIds.includes(t.id) && isCurrentTimeInSlot(t.time))
+  // Current real-time clock
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentTimeDisplay = `${String(now.getHours()).padStart(2, '0')}:${String(
+    now.getMinutes()
+  ).padStart(2, '0')}`;
+
+  // 1. Check if user is currently running a live stopwatch on a task
+  const runningTimerTask = activeTimerTaskId
+    ? scheduledTasks.find((t) => t.id === activeTimerTaskId)
     : undefined;
 
-  const currentFocusTask = activeTimerTaskId
-    ? scheduledTasks.find((t) => t.id === activeTimerTaskId)
-    : matchedSlotTask || (activeTaskIndex !== -1 ? scheduledTasks[activeTaskIndex] : null);
+  // 2. Check if real-time clock falls inside an uncompleted task's time slot
+  const matchedSlotTask = isToday
+    ? pendingScheduledTasks.find((t) => isCurrentTimeInSlot(t.time))
+    : undefined;
+
+  // 3. If no task actively matches right now, find the UPCOMING scheduled task:
+  let upcomingTaskByTime: TaskItem | undefined;
+  if (isToday) {
+    const futurePending = pendingScheduledTasks
+      .map((t) => ({ task: t, slot: parseSlotMinutes(t.time) }))
+      .filter((item) => item.slot && item.slot.start >= currentMinutes)
+      .sort((a, b) => a.slot!.start - b.slot!.start);
+
+    if (futurePending.length > 0) {
+      upcomingTaskByTime = futurePending[0].task;
+    }
+  }
+
+  // Fallback next pending task in list sequence
+  const fallbackNextTask = pendingScheduledTasks.length > 0 ? pendingScheduledTasks[0] : null;
+
+  // Whether a task is actively occurring right now (clock is in its slot or stopwatch running)
+  const isDirectlyInSession = !!(runningTimerTask || matchedSlotTask);
+
+  // The task to display in Current Directive:
+  // If actively in session, that task is focused.
+  // When no task is scheduled at the present time, focus on the upcoming task!
+  const currentFocusTask: TaskItem | null =
+    runningTimerTask || matchedSlotTask || upcomingTaskByTime || fallbackNextTask;
+
+  // Find the NEXT upcoming task after currentFocusTask:
+  let nextUpcomingTask: TaskItem | null = null;
+  if (currentFocusTask) {
+    const focusIndex = pendingScheduledTasks.findIndex((t) => t.id === currentFocusTask.id);
+    if (focusIndex !== -1 && focusIndex + 1 < pendingScheduledTasks.length) {
+      nextUpcomingTask = pendingScheduledTasks[focusIndex + 1];
+    } else if (focusIndex === -1 && pendingScheduledTasks.length > 0) {
+      nextUpcomingTask = pendingScheduledTasks[0];
+    }
+  }
 
   const asciiBar = generateAsciiProgressBar(completedCount, totalTasks, barWidth, asciiStyle);
 
@@ -751,17 +834,19 @@ export function TrackerView({
               <div className="border-2 border-white bg-white text-black p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/20 pb-2">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 bg-black animate-ping" />
+                    <span className={`inline-block w-2.5 h-2.5 bg-black ${isDirectlyInSession ? 'animate-ping' : ''}`} />
                     <span className="text-xs font-black uppercase tracking-wider">
-                      _CURRENT_DIRECTIVE // WHAT TO DO RIGHT NOW
+                      {isDirectlyInSession
+                        ? '_CURRENT_DIRECTIVE // ACTIVE IN-PROGRESS'
+                        : `_CURRENT_DIRECTIVE // STANDBY (NO TASK AT ${currentTimeDisplay})`}
                     </span>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-widest bg-black text-white px-2 py-0.5">
                     {activeTimerTaskId === currentFocusTask.id
                       ? 'STOPWATCH RUNNING'
                       : matchedSlotTask?.id === currentFocusTask.id
-                      ? 'CURRENT TIME SLOT'
-                      : 'NEXT PENDING DIRECTIVE'}
+                      ? 'CURRENT TIME SLOT MATCH'
+                      : 'NEXT UPCOMING TASK'}
                   </span>
                 </div>
 
@@ -769,7 +854,7 @@ export function TrackerView({
                   <div className="space-y-1 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-base md:text-lg font-black tracking-tight">
-                        &gt;&gt;&gt; {currentFocusTask.title} &lt;&lt;&lt;
+                        {!isDirectlyInSession ? 'NEXT: ' : ''}{currentFocusTask.title}
                       </span>
                       <span className="text-[10px] uppercase border border-black px-1.5 py-0 font-bold">
                         {currentFocusTask.category}
@@ -780,9 +865,14 @@ export function TrackerView({
                       <span className="text-xs font-mono font-bold bg-black text-white px-2 py-0.5">
                         {currentFocusTask.timeSpentMinutes || 0}m / {currentFocusTask.durationMinutes}m planned
                       </span>
+                      {!isDirectlyInSession && (
+                        <span className="bg-black text-white text-[9px] font-bold px-1.5 py-0 tracking-wider">
+                          UPCOMING
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-black/80 font-mono leading-relaxed">
-                      {currentFocusTask.details}
+                      {currentFocusTask.details || 'No additional instructions logged.'}
                     </p>
                   </div>
 
@@ -799,6 +889,8 @@ export function TrackerView({
                         ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
                             timerSeconds % 60
                           ).padStart(2, '0')}]`
+                        : !isDirectlyInSession
+                        ? '[START EARLY]'
                         : '[START TIMER]'}
                     </button>
 
@@ -807,6 +899,14 @@ export function TrackerView({
                       className="px-3 py-1.5 text-xs font-bold border-2 border-black bg-black text-white hover:bg-black/80 transition-none cursor-pointer uppercase"
                     >
                       [MARK DONE]
+                    </button>
+
+                    <button
+                      onClick={(e) => handleOpenEditModal(currentFocusTask, e)}
+                      className="px-2.5 py-1.5 text-xs font-bold border border-black hover:bg-black hover:text-white text-black transition-none cursor-pointer uppercase"
+                      title="Edit this directive task"
+                    >
+                      [EDIT TASK]
                     </button>
 
                     <button
@@ -824,6 +924,43 @@ export function TrackerView({
                     </button>
                   </div>
                 </div>
+
+                {/* SHOW NEXT UPCOMING TASK BANNER */}
+                {nextUpcomingTask && (
+                  <div className="border-t border-black/20 pt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="bg-black text-white text-[9px] font-black px-1.5 py-0.5 tracking-wider">
+                        {isDirectlyInSession ? 'NEXT:' : 'FOLLOWED BY:'}
+                      </span>
+                      <span className="font-bold text-black text-xs sm:text-sm tracking-tight">
+                        {nextUpcomingTask.title}
+                      </span>
+                      <span className="font-mono text-black/70 text-xs font-bold">
+                        [{nextUpcomingTask.time}]
+                      </span>
+                      <span className="text-[10px] uppercase border border-black/40 px-1 py-0 font-bold">
+                        {nextUpcomingTask.category}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => handleOpenEditModal(nextUpcomingTask, e)}
+                        className="border border-black/40 hover:border-black px-2 py-0.5 text-[10px] font-bold uppercase cursor-pointer text-black"
+                        title="Edit next upcoming task"
+                      >
+                        [EDIT NEXT]
+                      </button>
+                      <button
+                        onClick={(e) => handleToggleTimer(nextUpcomingTask.id, e)}
+                        className="border border-black bg-transparent hover:bg-black hover:text-white px-2 py-0.5 text-[10px] font-bold uppercase cursor-pointer text-black"
+                        title="Start timer on next task early"
+                      >
+                        [START EARLY]
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : scheduledTasks.length > 0 && completedCount === scheduledTasks.length ? (
               <div className="border border-white bg-black p-4 text-center space-y-1">
@@ -856,10 +993,9 @@ export function TrackerView({
                   NO TASKS CURRENTLY SCHEDULED FOR {currentSchedule.dayName.toUpperCase()}. USE [+ ADD TASK] ABOVE OR ACTIVATE PARKED TASKS BELOW.
                 </div>
               ) : (
-                scheduledTasks.map((task, index) => {
+                scheduledTasks.map((task) => {
                   const isCompleted = completedTaskIds.includes(task.id);
-                  const isCurrentNow = currentFocusTask?.id === task.id && !isCompleted;
-                  const isActive = !isCompleted && index === activeTaskIndex;
+                  const isInProgress = currentFocusTask?.id === task.id && !isCompleted;
                   const isTimerRunning = activeTimerTaskId === task.id;
                   const timeSpent = task.timeSpentMinutes || 0;
                   const matches = findRoutineMatches(task, schedules);
@@ -871,10 +1007,8 @@ export function TrackerView({
                       className={`border p-3 space-y-2 transition-none ${
                         isCompleted
                           ? 'border-white/20 bg-black opacity-50'
-                          : isCurrentNow
+                          : isInProgress
                           ? 'border-white bg-white/10 ring-1 ring-white'
-                          : isActive
-                          ? 'border-white bg-white/5'
                           : 'border-white/30 bg-black hover:border-white/60'
                       }`}
                     >
@@ -888,14 +1022,12 @@ export function TrackerView({
                             className={`text-xs px-2 py-0.5 font-bold border shrink-0 ${
                               isCompleted
                                 ? 'bg-white text-black border-white'
-                                : isCurrentNow
+                                : isInProgress
                                 ? 'border-white text-black bg-white'
-                                : isActive
-                                ? 'border-white text-white bg-white/20'
                                 : 'border-white/40 text-white/60'
                             }`}
                           >
-                            {isCompleted ? '[DONE]' : isCurrentNow ? '[DO_NOW]' : isActive ? '[IN_PROGRESS]' : '[PENDING]'}
+                            {isCompleted ? '[DONE]' : isInProgress ? '[IN_PROGRESS]' : '[PENDING]'}
                           </span>
 
                           <div>
@@ -908,9 +1040,9 @@ export function TrackerView({
                                 {task.title}
                               </span>
 
-                              {isCurrentNow && (
+                              {isInProgress && (
                                 <span className="bg-white text-black text-[9px] font-black px-1.5 py-0 tracking-wider">
-                                  &gt;&gt; DO THIS NOW &lt;&lt;
+                                  &gt;&gt; IN PROGRESS &lt;&lt;
                                 </span>
                               )}
 
@@ -948,8 +1080,16 @@ export function TrackerView({
                           </div>
                         </div>
 
-                        {/* Schedule / Deschedule & Delete Actions */}
+                        {/* Edit, Deschedule & Delete Actions */}
                         <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                          <button
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold uppercase transition-none cursor-pointer"
+                            title="Edit task specifications, category, time, or recurrence"
+                          >
+                            [EDIT]
+                          </button>
+
                           <button
                             onClick={(e) => handleRequestDeschedule(task, e)}
                             className="border border-white/30 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold uppercase transition-none cursor-pointer"
@@ -1080,6 +1220,13 @@ export function TrackerView({
                         </div>
 
                         <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                          <button
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase"
+                            title="Edit this parked task"
+                          >
+                            [EDIT]
+                          </button>
                           <button
                             onClick={(e) => handleRequestSchedule(task, e)}
                             className="border border-white bg-white text-black px-2 py-0.5 text-[10px] font-bold uppercase transition-none cursor-pointer"
@@ -1247,6 +1394,20 @@ export function TrackerView({
         onUpdateSchedules={onUpdateSchedules}
         onRefreshHistory={onRefreshHistory}
         currentDayKey={selectedDay as DayKey}
+      />
+
+      {/* Edit Task Specification Modal */}
+      <EditTaskModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingTask(null);
+        }}
+        task={editingTask}
+        currentDayKey={selectedDay as DayKey}
+        currentDayName={currentSchedule.dayName}
+        schedules={schedules}
+        onSave={handleSaveTaskEdit}
       />
     </div>
   );

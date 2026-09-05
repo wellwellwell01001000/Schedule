@@ -17,6 +17,9 @@ import {
   getLastSyncTime,
   setLastSyncTime,
   clearStoredAuth,
+  getCustomOAuthClientId,
+  setCustomOAuthClientId,
+  getOAuthClientId,
 } from '../services/googleDriveService';
 import { DaySchedule, MonthLogRecord } from '../types';
 
@@ -42,12 +45,17 @@ export function BackupManagerModal({
   const [isDriveSyncing, setIsDriveSyncing] = useState<boolean>(false);
   const [driveLastSync, setDriveLastSync] = useState<string | null>(() => getLastSyncTime());
   const [hasDriveAuth, setHasDriveAuth] = useState<boolean>(() => !!getStoredAccessToken());
+  const [showOAuthSettings, setShowOAuthSettings] = useState<boolean>(false);
+  const [customClientIdInput, setCustomClientIdInput] = useState<string>(() => getCustomOAuthClientId());
+  const [activeClientId, setActiveClientId] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setHasDriveAuth(!!getStoredAccessToken());
     setDriveLastSync(getLastSyncTime());
+    getOAuthClientId().then(setActiveClientId);
   }, [isOpen]);
+
 
   if (!isOpen) return null;
 
@@ -307,6 +315,58 @@ export function BackupManagerModal({
                 >
                   [LOGOUT]
                 </button>
+              )}
+            </div>
+
+            {/* Collapsible Client ID / OAuth Diagnostic Settings */}
+            <div className="pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowOAuthSettings(!showOAuthSettings)}
+                className="text-[10px] font-mono opacity-70 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>{showOAuthSettings ? '[-] HIDE' : '[+] SHOW'} OAUTH CLIENT ID CONFIGURATION &amp; DIAGNOSTICS</span>
+              </button>
+
+              {showOAuthSettings && (
+                <div className="mt-2 p-3 border border-white/20 bg-white/5 space-y-2 text-[11px]">
+                  <div>
+                    <span className="opacity-60 block text-[10px] uppercase font-bold">CURRENT ACTIVE CLIENT ID:</span>
+                    <span className="font-mono text-white break-all text-[10px] select-all bg-black px-1.5 py-0.5 border border-white/30 inline-block mt-0.5">
+                      {activeClientId || 'Loading...'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 pt-1">
+                    <label className="opacity-75 block text-[10px] uppercase font-bold">
+                      CUSTOM GOOGLE OAUTH CLIENT ID (OPTIONAL OVERRIDE):
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={customClientIdInput}
+                        onChange={(e) => setCustomClientIdInput(e.target.value)}
+                        placeholder="e.g. 787072681628-...apps.googleusercontent.com"
+                        className="flex-1 bg-black border border-white/50 px-2 py-1 text-[11px] text-white focus:border-white focus:outline-none font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomOAuthClientId(customClientIdInput);
+                          getOAuthClientId().then(setActiveClientId);
+                          setFeedback('OAUTH CLIENT ID SAVED');
+                          setTimeout(() => setFeedback(null), 3000);
+                        }}
+                        className="border border-white bg-white text-black px-3 py-1 text-[10px] font-bold uppercase hover:bg-white/90 cursor-pointer"
+                      >
+                        SAVE
+                      </button>
+                    </div>
+                    <p className="text-[10px] opacity-60 leading-normal">
+                      Tip: If you experience Google OAuth <code className="text-white">origin_mismatch</code>, you can create a Web OAuth Client ID in your Google Cloud Console, add this app domain to Authorized JavaScript Origins, and paste your Client ID above. Alternatively, use the <strong>Download File (.json)</strong> below for 100% offline, zero-setup backups on any device!
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           </div>
