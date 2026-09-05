@@ -10,14 +10,12 @@ import {
 } from '../data/backupStore';
 import {
   getVaultScriptUrl,
-  setVaultScriptUrl,
   getOrCreateSyncCode,
   setStoredSyncCode,
   generateSyncCode,
   getVaultLastSync,
   saveToDriveVault,
   loadFromDriveVault,
-  APPS_SCRIPT_SOURCE_CODE,
 } from '../services/driveVaultService';
 import { DaySchedule, MonthLogRecord } from '../types';
 
@@ -44,15 +42,11 @@ export function BackupManagerModal({
   const [vaultLastSync, setVaultLastSyncTime] = useState<string | null>(() => getVaultLastSync());
   const [syncCode, setSyncCode] = useState<string>(() => getOrCreateSyncCode());
   const [restoreCodeInput, setRestoreCodeInput] = useState<string>('');
-  const [webhookUrlInput, setWebhookUrlInput] = useState<string>(() => getVaultScriptUrl());
-  const [showVaultSetup, setShowVaultSetup] = useState<boolean>(false);
-  const [scriptCopied, setScriptCopied] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setVaultLastSyncTime(getVaultLastSync());
     setSyncCode(getOrCreateSyncCode());
-    setWebhookUrlInput(getVaultScriptUrl());
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -62,13 +56,12 @@ export function BackupManagerModal({
   // Save / Sync to Google Drive Vault via Webhook
   const handleDriveVaultSync = async () => {
     if (!getVaultScriptUrl()) {
-      setShowVaultSetup(true);
-      setFeedback('SETUP REQUIRED: Please enter and save your Google Drive Apps Script Webhook URL below.');
+      setFeedback('Drive Vault is connecting...');
       return;
     }
 
     setIsDriveSyncing(true);
-    setFeedback(`SAVING TO YOUR GOOGLE DRIVE VAULT (CODE: ${syncCode})...`);
+    setFeedback(`SAVING TO GOOGLE DRIVE VAULT (CODE: ${syncCode})...`);
     try {
       const currentSnap = createSnapshot(schedules, history, 'manual');
       const result = await saveToDriveVault(currentSnap, syncCode);
@@ -100,8 +93,7 @@ export function BackupManagerModal({
     }
 
     if (!getVaultScriptUrl()) {
-      setShowVaultSetup(true);
-      setFeedback('SETUP REQUIRED: Please enter your Google Drive Apps Script Webhook URL below.');
+      setFeedback('Drive Vault is connecting...');
       return;
     }
 
@@ -147,31 +139,6 @@ export function BackupManagerModal({
     navigator.clipboard.writeText(syncCode);
     setFeedback(`COPIED SYNC CODE "${syncCode}" TO CLIPBOARD!`);
     setTimeout(() => setFeedback(null), 2500);
-  };
-
-  const handleCopyAppsScript = () => {
-    navigator.clipboard.writeText(APPS_SCRIPT_SOURCE_CODE);
-    setScriptCopied(true);
-    setFeedback('COPIED GOOGLE APPS SCRIPT CODE TO CLIPBOARD!');
-    setTimeout(() => {
-      setFeedback(null);
-      setScriptCopied(false);
-    }, 4000);
-  };
-
-  const handleSaveWebhookUrl = () => {
-    if (!webhookUrlInput.trim()) {
-      setVaultScriptUrl('');
-      setFeedback('REMOVED DRIVE VAULT WEBHOOK URL');
-      setTimeout(() => setFeedback(null), 2500);
-      return;
-    }
-    if (!webhookUrlInput.includes('script.google.com')) {
-      alert('Note: Google Apps Script Web App URLs typically start with "https://script.google.com/macros/s/.../exec".');
-    }
-    setVaultScriptUrl(webhookUrlInput.trim());
-    setFeedback('GOOGLE DRIVE VAULT WEBHOOK URL SAVED SUCCESSFULLY!');
-    setTimeout(() => setFeedback(null), 3500);
   };
 
   const handleCreateManualSnapshot = () => {
@@ -375,85 +342,6 @@ export function BackupManagerModal({
                   [FETCH &amp; RESTORE FROM VAULT]
                 </button>
               </div>
-            </div>
-
-            {/* Collapsible Owner Google Drive Webhook Setup */}
-            <div className="pt-2 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setShowVaultSetup(!showVaultSetup)}
-                className="text-[10px] font-mono opacity-80 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
-              >
-                <span>{showVaultSetup ? '[-] HIDE' : '[+] SHOW'} DRIVE VAULT SETUP &amp; WEBHOOK (FOR APP OWNER)</span>
-              </button>
-
-              {showVaultSetup && (
-                <div className="mt-3 p-3.5 border border-white/20 bg-white/5 space-y-3 text-[11px]">
-                  <div className="space-y-1">
-                    <div className="font-bold text-white uppercase text-xs">
-                      HOW TO CONNECT YOUR PERSONAL GOOGLE DRIVE (2-MINUTE ONE-TIME SETUP):
-                    </div>
-                    <p className="opacity-80 leading-relaxed text-[10px]">
-                      This allows all users to save routines directly into a folder in <strong>your Google Drive</strong> without needing them to log into Google accounts or deal with permissions!
-                    </p>
-                  </div>
-
-                  <ol className="list-decimal list-inside space-y-1.5 opacity-90 text-[10px] leading-relaxed border-t border-b border-white/15 py-2">
-                    <li>
-                      Open <strong><a href="https://script.new" target="_blank" rel="noreferrer" className="underline text-white font-bold">script.new</a></strong> in your browser (while logged into your Google account).
-                    </li>
-                    <li>
-                      Click the button below to copy the ready-to-use Google Apps Script code, and paste it into the editor (replacing any existing text):
-                      <div className="pt-1">
-                        <button
-                          type="button"
-                          onClick={handleCopyAppsScript}
-                          className="border border-white bg-white text-black px-2.5 py-1 text-[10px] font-bold uppercase hover:bg-white/80 cursor-pointer"
-                        >
-                          {scriptCopied ? '[✓ COPIED TO CLIPBOARD!]' : '[COPY APPS SCRIPT CODE]'}
-                        </button>
-                      </div>
-                    </li>
-                    <li>
-                      In Google Apps Script, click <strong>Deploy</strong> (top right) &rarr; <strong>New deployment</strong>.
-                    </li>
-                    <li>
-                      Click the gear icon next to &quot;Select type&quot; &rarr; choose <strong>Web app</strong>.
-                    </li>
-                    <li>
-                      Set &quot;Execute as&quot; to <strong>Me</strong>, and set &quot;Who has access&quot; to <strong>Anyone</strong>. Click <strong>Deploy</strong>.
-                    </li>
-                    <li>
-                      Copy the <strong>Web app URL</strong> (it starts with <code className="text-white">https://script.google.com/macros/s/.../exec</code>) and paste it below:
-                    </li>
-                  </ol>
-
-                  <div className="space-y-1.5">
-                    <label className="opacity-80 block text-[10px] uppercase font-bold">
-                      GOOGLE APPS SCRIPT WEB APP URL:
-                    </label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="url"
-                        value={webhookUrlInput}
-                        onChange={(e) => setWebhookUrlInput(e.target.value)}
-                        placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                        className="flex-1 bg-black border border-white/50 px-2 py-1.5 text-[11px] text-white focus:border-white focus:outline-none font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSaveWebhookUrl}
-                        className="border border-white bg-white text-black px-3 py-1.5 text-[10px] font-bold uppercase hover:bg-white/90 cursor-pointer shrink-0"
-                      >
-                        [SAVE WEBHOOK URL]
-                      </button>
-                    </div>
-                    <div className="text-[9px] opacity-60">
-                      Files will automatically be stored in a dedicated &quot;RoutineTrackerBackups&quot; folder in your personal Google Drive.
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 

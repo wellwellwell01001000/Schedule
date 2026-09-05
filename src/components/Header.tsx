@@ -13,6 +13,7 @@ interface HeaderProps {
   onOpenTutorial?: () => void;
   onQuickDriveSync?: () => void;
   isSyncing?: boolean;
+  syncCode?: string;
 }
 
 export function Header({
@@ -25,6 +26,7 @@ export function Header({
   onOpenTutorial,
   onQuickDriveSync,
   isSyncing,
+  syncCode,
 }: HeaderProps) {
   const [timeStr, setTimeStr] = useState<string>(formatTerminalTimestamp());
   const todayKey = getDayKeyFromDate();
@@ -39,8 +41,8 @@ export function Header({
 
   return (
     <header className="border-b border-white pb-4 mb-6 bg-black text-white font-mono">
-      {/* Top utility row */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-white/20 pb-3 mb-4 gap-3">
+      {/* Top utility row: Title + Handy Sync to Cloud button + Day badge */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-white/20 pb-3 mb-4 gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="inline-block h-2 w-2 bg-white" />
@@ -51,14 +53,43 @@ export function Header({
           </p>
         </div>
 
-        <div className="text-left md:text-right flex flex-col md:items-end">
-          <div className="bg-white text-black px-3 py-1 font-bold text-xs uppercase tracking-wide inline-block">
-            {currentSchedule?.dayName?.toUpperCase() || 'MONDAY'}: {currentSchedule?.code || 'DAY'} ({currentSchedule?.categoryLabel?.toUpperCase() || 'ROUTINE'})
-          </div>
-          <div className="text-[10px] mt-1.5 opacity-50 uppercase tracking-widest flex items-center gap-2">
-            <span>STATUS: ACTIVE_METRICS_LOGGING</span>
-            <span>|</span>
-            <span>{timeStr}</span>
+        {/* Top Direct Cloud Sync & Status */}
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-between md:justify-end">
+          {onQuickDriveSync && (
+            <button
+              onClick={onQuickDriveSync}
+              disabled={isSyncing}
+              className="border-2 border-white bg-white text-black px-3.5 py-1.5 text-xs hover:bg-white/90 transition-none cursor-pointer uppercase font-black flex items-center gap-2 disabled:opacity-50 shadow-md"
+              title={`Instantly sync your tasks and logs to Google Drive cloud vault (Code: ${syncCode || 'ACTIVE'})`}
+            >
+              {isSyncing ? (
+                <>
+                  <span className="inline-block w-2 h-2 bg-black animate-ping" />
+                  <span>SYNCING CLOUD...</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm leading-none font-bold">☁</span>
+                  <span>[SYNC TO CLOUD]</span>
+                  {syncCode && (
+                    <span className="bg-black text-white px-1.5 py-0.5 text-[10px] font-mono tracking-wider">
+                      {syncCode}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          )}
+
+          <div className="text-left md:text-right flex flex-col md:items-end">
+            <div className="bg-white text-black px-3 py-1 font-bold text-xs uppercase tracking-wide inline-block">
+              {currentSchedule?.dayName?.toUpperCase() || 'MONDAY'}: {currentSchedule?.code || 'DAY'} ({currentSchedule?.categoryLabel?.toUpperCase() || 'ROUTINE'})
+            </div>
+            <div className="text-[10px] mt-1.5 opacity-50 uppercase tracking-widest flex items-center gap-2">
+              <span>STATUS: ACTIVE_METRICS_LOGGING</span>
+              <span>|</span>
+              <span>{timeStr}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -101,27 +132,6 @@ export function Header({
         </nav>
 
         <div className="flex items-center gap-2">
-          {onQuickDriveSync && (
-            <button
-              onClick={onQuickDriveSync}
-              disabled={isSyncing}
-              className="border border-white bg-white text-black px-2.5 py-1 text-xs hover:bg-white/90 transition-none cursor-pointer uppercase font-black flex items-center gap-1.5 disabled:opacity-50"
-              title="One-click Sync and Backup to Google Drive"
-            >
-              {isSyncing ? (
-                <>
-                  <span className="inline-block w-1.5 h-1.5 bg-black animate-ping" />
-                  <span>SYNCING...</span>
-                </>
-              ) : (
-                <>
-                  <span className="inline-block w-1.5 h-1.5 bg-black" />
-                  <span>[SYNC &amp; BACKUP]</span>
-                </>
-              )}
-            </button>
-          )}
-
           {onOpenTemplates && (
             <button
               onClick={onOpenTemplates}

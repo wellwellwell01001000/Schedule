@@ -42,6 +42,7 @@ export default function App() {
   });
   const [isQuickSyncing, setIsQuickSyncing] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [syncCode, setSyncCode] = useState<string>(() => getOrCreateSyncCode());
 
   // Persistent schedules state
   const [schedules, setSchedules] = useState<Record<string, DaySchedule>>(() => {
@@ -114,9 +115,10 @@ export default function App() {
       // Upload state to Drive Vault
       const result = await saveToDriveVault(currentSnap, code);
       saveSnapshotToList(currentSnap);
+      setSyncCode(result.code);
 
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setSyncToast(`[DRIVE VAULT SYNCED: ${timeStr}] Code: ${result.code} • Saved to your Google Drive!`);
+      setSyncToast(`[✓ CLOUD SYNCED: ${timeStr}] Code: ${result.code} • Saved to Google Drive!`);
       setTimeout(() => setSyncToast(null), 4500);
     } catch (err: unknown) {
       console.error('Quick sync error:', err);
@@ -159,6 +161,7 @@ export default function App() {
           onOpenTutorial={() => setIsTutorialOpen(true)}
           onQuickDriveSync={handleQuickDriveSync}
           isSyncing={isQuickSyncing}
+          syncCode={syncCode}
         />
 
         {/* Global Sync Notification Banner */}
