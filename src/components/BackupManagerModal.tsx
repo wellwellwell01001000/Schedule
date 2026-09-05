@@ -9,18 +9,16 @@ import {
   restoreAllCompletedMap,
 } from '../data/backupStore';
 import {
-  getStoredAccessToken,
-  requestGoogleDriveAccessToken,
-  uploadToGoogleDrive,
-  findDriveSyncFile,
-  downloadFromGoogleDrive,
-  getLastSyncTime,
-  setLastSyncTime,
-  clearStoredAuth,
-  getCustomOAuthClientId,
-  setCustomOAuthClientId,
-  getOAuthClientId,
-} from '../services/googleDriveService';
+  getVaultScriptUrl,
+  setVaultScriptUrl,
+  getOrCreateSyncCode,
+  setStoredSyncCode,
+  generateSyncCode,
+  getVaultLastSync,
+  saveToDriveVault,
+  loadFromDriveVault,
+  APPS_SCRIPT_SOURCE_CODE,
+} from '../services/driveVaultService';
 import { DaySchedule, MonthLogRecord } from '../types';
 
 interface BackupManagerModalProps {
@@ -43,112 +41,137 @@ export function BackupManagerModal({
   const [snapshots, setSnapshots] = useState<SystemSnapshot[]>(() => getSavedSnapshots());
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isDriveSyncing, setIsDriveSyncing] = useState<boolean>(false);
-  const [driveLastSync, setDriveLastSync] = useState<string | null>(() => getLastSyncTime());
-  const [hasDriveAuth, setHasDriveAuth] = useState<boolean>(() => !!getStoredAccessToken());
-  const [showOAuthSettings, setShowOAuthSettings] = useState<boolean>(false);
-  const [customClientIdInput, setCustomClientIdInput] = useState<string>(() => getCustomOAuthClientId());
-  const [activeClientId, setActiveClientId] = useState<string>('');
+  const [vaultLastSync, setVaultLastSyncTime] = useState<string | null>(() => getVaultLastSync());
+  const [syncCode, setSyncCode] = useState<string>(() => getOrCreateSyncCode());
+  const [restoreCodeInput, setRestoreCodeInput] = useState<string>('');
+  const [webhookUrlInput, setWebhookUrlInput] = useState<string>(() => getVaultScriptUrl());
+  const [showVaultSetup, setShowVaultSetup] = useState<boolean>(false);
+  const [scriptCopied, setScriptCopied] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setHasDriveAuth(!!getStoredAccessToken());
-    setDriveLastSync(getLastSyncTime());
-    getOAuthClientId().then(setActiveClientId);
+    setVaultLastSyncTime(getVaultLastSync());
+    setSyncCode(getOrCreateSyncCode());
+    setWebhookUrlInput(getVaultScriptUrl());
   }, [isOpen]);
-
 
   if (!isOpen) return null;
 
-  // Single-Click Google Drive Sync: Backs up to Drive, or fetches newer if cloud exists
-  const handleGoogleDriveSync = async () => {
+  const isVaultConfigured = !!getVaultScriptUrl();
+
+  // Save / Sync to Google Drive Vault via Webhook
+  const handleDriveVaultSync = async () => {
+    if (!getVaultScriptUrl()) {
+      setShowVaultSetup(true);
+      setFeedback('SETUP REQUIRED: Please enter and save your Google Drive Apps Script Webhook URL below.');
+      return;
+    }
+
     setIsDriveSyncing(true);
-    setFeedback('CONNECTING TO GOOGLE DRIVE...');
+    setFeedback(`SAVING TO YOUR GOOGLE DRIVE VAULT (CODE: ${syncCode})...`);
     try {
-      const token = await requestGoogleDriveAccessToken();
-      setHasDriveAuth(true);
-
-      // Check if file already exists in user's Drive
-      setFeedback('CHECKING GOOGLE DRIVE SYNC ARCHIVE...');
-      const existingDriveFile = await findDriveSyncFile(token);
-
-      // Create snapshot of current local system
       const currentSnap = createSnapshot(schedules, history, 'manual');
-
-      if (existingDriveFile) {
-        // Fetch remote metadata & prompt or upload
-        setFeedback('SYNCING LOCAL STATE TO GOOGLE DRIVE...');
-      } else {
-        setFeedback('CREATING NEW ROUTINE SYNC ARCHIVE ON GOOGLE DRIVE...');
-      }
-
-      const result = await uploadToGoogleDrive(token, currentSnap);
-      const nowIso = new Date().toISOString();
+      const result = await saveToDriveVault(currentSnap, syncCode);
       const displayTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setLastSyncTime(nowIso);
-      setDriveLastSync(nowIso);
+
+      setVaultLastSyncTime(new Date().toISOString());
 
       // Save into local snapshot registry too
       const updatedSnaps = saveSnapshotToList(currentSnap);
       setSnapshots(updatedSnaps);
 
-      setFeedback(`SUCCESS: SYNCED TO GOOGLE DRIVE (${displayTime}) [FILE ID: ${result.fileId.substring(0, 8)}...]`);
-      setTimeout(() => setFeedback(null), 4500);
+      setFeedback(`[✓] SYNC SUCCESSFUL: SAVED TO GOOGLE DRIVE (${displayTime}) • CODE: ${result.code}`);
+      setTimeout(() => setFeedback(null), 5500);
     } catch (err: unknown) {
-      console.error('Drive Sync Error:', err);
+      console.error('Drive Vault Sync Error:', err);
       const msg = err instanceof Error ? err.message : 'Google Drive sync failed.';
-      setFeedback(`DRIVE ERROR: ${msg}`);
-      if (msg.includes('expired') || msg.includes('401')) {
-        setHasDriveAuth(false);
-      }
+      setFeedback(`VAULT ERROR: ${msg}`);
     } finally {
       setIsDriveSyncing(false);
     }
   };
 
-  // Pull latest from Google Drive
-  const handleGoogleDrivePull = async () => {
+  // Pull / Restore from Google Drive Vault using a Sync Code
+  const handleDriveVaultPull = async () => {
+    const codeToLoad = (restoreCodeInput.trim() || syncCode).toUpperCase();
+    if (!codeToLoad) {
+      setFeedback('PLEASE ENTER A VALID SYNC CODE TO RESTORE.');
+      return;
+    }
+
+    if (!getVaultScriptUrl()) {
+      setShowVaultSetup(true);
+      setFeedback('SETUP REQUIRED: Please enter your Google Drive Apps Script Webhook URL below.');
+      return;
+    }
+
     setIsDriveSyncing(true);
-    setFeedback('FETCHING LATEST DATA FROM GOOGLE DRIVE...');
+    setFeedback(`QUERYING GOOGLE DRIVE FOR SYNC CODE: ${codeToLoad}...`);
     try {
-      const token = await requestGoogleDriveAccessToken();
-      setHasDriveAuth(true);
-
-      const existingDriveFile = await findDriveSyncFile(token);
-      if (!existingDriveFile) {
-        setFeedback('NO ROUTINE ARCHIVE FOUND ON GOOGLE DRIVE YET. RUN [SYNC & BACKUP] FIRST.');
-        setTimeout(() => setFeedback(null), 4000);
-        return;
-      }
-
-      const remoteContent = await downloadFromGoogleDrive(token, existingDriveFile.id);
+      const remoteSnap = await loadFromDriveVault(codeToLoad);
       const validatedSnap = parseAndValidateBackupJson(
-        typeof remoteContent === 'string' ? remoteContent : JSON.stringify(remoteContent)
+        typeof remoteSnap === 'string' ? remoteSnap : JSON.stringify(remoteSnap)
       );
 
-      if (window.confirm(`Found Google Drive backup from ${validatedSnap.displayDate}. Restore and replace current local data?`)) {
+      if (window.confirm(`Found Google Drive backup for Code [${codeToLoad}] from ${validatedSnap.displayDate}. Restore and replace current local data?`)) {
         restoreAllCompletedMap(validatedSnap.completedMap);
         onRestoreSystem(validatedSnap.schedules, validatedSnap.history);
+        setSyncCode(codeToLoad);
+        setStoredSyncCode(codeToLoad);
         const updated = saveSnapshotToList({
           ...validatedSnap,
           type: 'file_import',
         });
         setSnapshots(updated);
-        setFeedback(`RESTORED SYSTEM FROM GOOGLE DRIVE (${validatedSnap.displayDate})`);
-        setTimeout(() => setFeedback(null), 4000);
+        setFeedback(`[✓] SYSTEM RESTORED FROM GOOGLE DRIVE VAULT (${validatedSnap.displayDate})`);
+        setTimeout(() => setFeedback(null), 4500);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to pull from Google Drive.';
-      setFeedback(`DRIVE ERROR: ${msg}`);
+      console.error('Drive Vault Load Error:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to retrieve routine from Google Drive.';
+      setFeedback(`VAULT ERROR: ${msg}`);
     } finally {
       setIsDriveSyncing(false);
     }
   };
 
-  const handleDisconnectDrive = () => {
-    clearStoredAuth();
-    setHasDriveAuth(false);
-    setFeedback('DISCONNECTED GOOGLE DRIVE SESSION');
+  const handleGenerateNewCode = () => {
+    const newCode = generateSyncCode();
+    setSyncCode(newCode);
+    setStoredSyncCode(newCode);
+    setFeedback(`GENERATED NEW SYNC CODE: ${newCode}`);
+    setTimeout(() => setFeedback(null), 3000);
+  };
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(syncCode);
+    setFeedback(`COPIED SYNC CODE "${syncCode}" TO CLIPBOARD!`);
     setTimeout(() => setFeedback(null), 2500);
+  };
+
+  const handleCopyAppsScript = () => {
+    navigator.clipboard.writeText(APPS_SCRIPT_SOURCE_CODE);
+    setScriptCopied(true);
+    setFeedback('COPIED GOOGLE APPS SCRIPT CODE TO CLIPBOARD!');
+    setTimeout(() => {
+      setFeedback(null);
+      setScriptCopied(false);
+    }, 4000);
+  };
+
+  const handleSaveWebhookUrl = () => {
+    if (!webhookUrlInput.trim()) {
+      setVaultScriptUrl('');
+      setFeedback('REMOVED DRIVE VAULT WEBHOOK URL');
+      setTimeout(() => setFeedback(null), 2500);
+      return;
+    }
+    if (!webhookUrlInput.includes('script.google.com')) {
+      alert('Note: Google Apps Script Web App URLs typically start with "https://script.google.com/macros/s/.../exec".');
+    }
+    setVaultScriptUrl(webhookUrlInput.trim());
+    setFeedback('GOOGLE DRIVE VAULT WEBHOOK URL SAVED SUCCESSFULLY!');
+    setTimeout(() => setFeedback(null), 3500);
   };
 
   const handleCreateManualSnapshot = () => {
@@ -218,7 +241,7 @@ export function BackupManagerModal({
           <div className="flex items-center gap-2">
             <span className="inline-block w-2.5 h-2.5 bg-black" />
             <span className="text-xs uppercase tracking-wider">
-              _PERSISTENCE_&amp;_FILE_BACKUP_ENGINE
+              _PERSISTENCE_&amp;_DRIVE_VAULT_BACKUP
             </span>
           </div>
           <button
@@ -235,18 +258,18 @@ export function BackupManagerModal({
           <div className="border border-white/30 p-3.5 space-y-2 bg-white/5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-white uppercase tracking-wider">
-                STORAGE STATUS: LOCAL-FIRST &amp; NIGHTLY AUTO-PERSISTENCE
+                STORAGE ARCHITECTURE: LOCAL-FIRST &amp; DRIVE VAULT SYNC
               </span>
               <span className="text-[10px] bg-white text-black font-bold px-1.5 py-0.5 uppercase">
-                ZERO_SERVER_FETCH_LAG
+                ZERO_AUTH_FRICTION
               </span>
             </div>
             <p className="opacity-75 leading-relaxed">
-              • <strong>Fast &amp; Offline</strong>: The app does not query a remote server on start. All your custom tasks, time tracking logs, and checked items load instantly from persistent storage.
+              • <strong>Fast &amp; Offline</strong>: The app never hangs waiting for remote servers. All your tasks, tracked minutes, and checkmarks load instantly from local storage.
               <br />
-              • <strong>Nightly Auto-Backup</strong>: Automatically saves a complete snapshot archive to storage every night when you wind down (after 21:00).
+              • <strong>Central Google Drive Vault</strong>: Users can backup and restore routines across any device with a simple 6-character Sync Code. <strong>No Google accounts, popups, or OAuth permissions required for users!</strong>
               <br />
-              • <strong>File Export / Google Drive</strong>: You can download a standalone <code className="text-white bg-black px-1">.json</code> file to save directly in any folder on your computer or into your Google Drive backup directory.
+              • <strong>Direct File Export (.json)</strong>: Download a standalone JSON backup file anytime for 100% offline portability.
             </p>
           </div>
 
@@ -256,115 +279,178 @@ export function BackupManagerModal({
             </div>
           )}
 
-          {/* GOOGLE DRIVE 1-BUTTON SYNC & BACKUP MODULE */}
-          <div className="border-2 border-white bg-black p-4 space-y-3">
+          {/* GOOGLE DRIVE VAULT SYNC MODULE (NO LOGIN REQUIRED) */}
+          <div className="border-2 border-white bg-black p-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/20 pb-2">
               <div className="flex items-center gap-2">
-                <span className={`inline-block w-2.5 h-2.5 ${hasDriveAuth ? 'bg-white' : 'border border-white'}`} />
+                <span className={`inline-block w-2.5 h-2.5 ${isVaultConfigured ? 'bg-white' : 'border border-white animate-pulse'}`} />
                 <span className="font-black text-xs uppercase tracking-wider">
-                  _GOOGLE_DRIVE_CROSS_DEVICE_SYNC
+                  _GOOGLE_DRIVE_VAULT_SYNC // (NO SIGN-IN REQUIRED)
                 </span>
               </div>
               <div className="flex items-center gap-2 text-[10px]">
-                {driveLastSync && (
+                {vaultLastSync && (
                   <span className="opacity-70 font-mono">
-                    LAST SYNCED: {new Date(driveLastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    LAST SYNCED: {new Date(vaultLastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 )}
-                <span className={`px-1.5 py-0.5 uppercase font-bold ${hasDriveAuth ? 'bg-white text-black' : 'border border-white/40 text-white/60'}`}>
-                  {hasDriveAuth ? 'DRIVE_READY' : 'NEEDS_AUTH'}
+                <span className={`px-1.5 py-0.5 uppercase font-bold ${isVaultConfigured ? 'bg-white text-black' : 'border border-white/40 text-white/60'}`}>
+                  {isVaultConfigured ? 'VAULT_CONNECTED' : 'SETUP_PENDING'}
                 </span>
               </div>
             </div>
 
-            <p className="text-[11px] opacity-75 leading-relaxed">
-              Synchronize your schedule, stopwatch logs, and checkmarks across your iPhone, Android phone, and Desktop browser via your personal Google Drive (<code className="text-white">routine_tracker_sync.json</code>).
-            </p>
+            {/* Sync Code Box */}
+            <div className="border border-white/30 p-3 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-[10px] opacity-60 uppercase font-bold tracking-wider">YOUR ACTIVE SYNC CODE:</div>
+                <div className="text-xl font-black tracking-widest text-white font-mono mt-0.5">
+                  {syncCode}
+                </div>
+                <div className="text-[10px] opacity-70 mt-1">
+                  Use this code to restore your routine on your phone, tablet, or another browser.
+                </div>
+              </div>
 
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="border border-white bg-white text-black px-3 py-1.5 text-xs font-bold uppercase hover:bg-white/80 cursor-pointer"
+                >
+                  [COPY CODE]
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateNewCode}
+                  className="border border-white/50 text-white px-2.5 py-1.5 text-xs hover:border-white cursor-pointer uppercase"
+                  title="Generate a new Sync Code for this device"
+                >
+                  [NEW CODE]
+                </button>
+              </div>
+            </div>
+
+            {/* Sync / Push Action */}
+            <div className="space-y-1">
               <button
-                onClick={handleGoogleDriveSync}
+                onClick={handleDriveVaultSync}
                 disabled={isDriveSyncing}
-                className="flex-1 min-w-[200px] border-2 border-white bg-white text-black py-2.5 px-4 font-black text-xs uppercase hover:bg-white/90 transition-none cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full border-2 border-white bg-white text-black py-3 px-4 font-black text-xs uppercase hover:bg-white/90 transition-none cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
               >
                 {isDriveSyncing ? (
                   <>
                     <span className="inline-block w-2 h-2 bg-black animate-ping" />
-                    <span>SYNCING WITH DRIVE...</span>
+                    <span>SAVING TO GOOGLE DRIVE VAULT...</span>
                   </>
                 ) : (
                   <>
-                    <span>&gt;&gt; [SYNC &amp; BACKUP TO GOOGLE DRIVE] &lt;&lt;</span>
+                    <span>&gt;&gt; [SYNC &amp; BACKUP TO GOOGLE DRIVE VAULT] &lt;&lt;</span>
                   </>
                 )}
               </button>
-
-              <button
-                onClick={handleGoogleDrivePull}
-                disabled={isDriveSyncing}
-                className="border border-white/70 bg-black text-white py-2.5 px-3 font-bold text-xs uppercase hover:bg-white hover:text-black transition-none cursor-pointer disabled:opacity-50"
-                title="Pull latest backup file from Google Drive to this device"
-              >
-                [FETCH FROM DRIVE]
-              </button>
-
-              {hasDriveAuth && (
-                <button
-                  onClick={handleDisconnectDrive}
-                  className="border border-white/30 text-white/60 py-2.5 px-2 text-[10px] uppercase hover:text-white hover:border-white transition-none cursor-pointer"
-                >
-                  [LOGOUT]
-                </button>
-              )}
+              <div className="text-[10px] opacity-65 text-center">
+                Saves your full schedule, stopwatch logs, and checks into your Google Drive folder.
+              </div>
             </div>
 
-            {/* Collapsible Client ID / OAuth Diagnostic Settings */}
+            {/* Restore / Pull from Code Module */}
+            <div className="pt-2 border-t border-white/15 space-y-2">
+              <div className="text-[10px] opacity-80 uppercase font-bold">
+                RESTORE ROUTINE FROM ANOTHER DEVICE VIA SYNC CODE:
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={restoreCodeInput}
+                  onChange={(e) => setRestoreCodeInput(e.target.value.toUpperCase())}
+                  placeholder="ENTER SYNC CODE (e.g. ROUT-8B2F)"
+                  className="flex-1 bg-black border border-white/50 px-3 py-2 text-xs text-white uppercase font-mono focus:border-white focus:outline-none"
+                />
+                <button
+                  onClick={handleDriveVaultPull}
+                  disabled={isDriveSyncing}
+                  className="border border-white/80 bg-black text-white px-4 py-2 text-xs font-bold uppercase hover:bg-white hover:text-black transition-none cursor-pointer disabled:opacity-50"
+                >
+                  [FETCH &amp; RESTORE FROM VAULT]
+                </button>
+              </div>
+            </div>
+
+            {/* Collapsible Owner Google Drive Webhook Setup */}
             <div className="pt-2 border-t border-white/10">
               <button
                 type="button"
-                onClick={() => setShowOAuthSettings(!showOAuthSettings)}
-                className="text-[10px] font-mono opacity-70 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
+                onClick={() => setShowVaultSetup(!showVaultSetup)}
+                className="text-[10px] font-mono opacity-80 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
               >
-                <span>{showOAuthSettings ? '[-] HIDE' : '[+] SHOW'} OAUTH CLIENT ID CONFIGURATION &amp; DIAGNOSTICS</span>
+                <span>{showVaultSetup ? '[-] HIDE' : '[+] SHOW'} DRIVE VAULT SETUP &amp; WEBHOOK (FOR APP OWNER)</span>
               </button>
 
-              {showOAuthSettings && (
-                <div className="mt-2 p-3 border border-white/20 bg-white/5 space-y-2 text-[11px]">
-                  <div>
-                    <span className="opacity-60 block text-[10px] uppercase font-bold">CURRENT ACTIVE CLIENT ID:</span>
-                    <span className="font-mono text-white break-all text-[10px] select-all bg-black px-1.5 py-0.5 border border-white/30 inline-block mt-0.5">
-                      {activeClientId || 'Loading...'}
-                    </span>
+              {showVaultSetup && (
+                <div className="mt-3 p-3.5 border border-white/20 bg-white/5 space-y-3 text-[11px]">
+                  <div className="space-y-1">
+                    <div className="font-bold text-white uppercase text-xs">
+                      HOW TO CONNECT YOUR PERSONAL GOOGLE DRIVE (2-MINUTE ONE-TIME SETUP):
+                    </div>
+                    <p className="opacity-80 leading-relaxed text-[10px]">
+                      This allows all users to save routines directly into a folder in <strong>your Google Drive</strong> without needing them to log into Google accounts or deal with permissions!
+                    </p>
                   </div>
 
-                  <div className="space-y-1 pt-1">
-                    <label className="opacity-75 block text-[10px] uppercase font-bold">
-                      CUSTOM GOOGLE OAUTH CLIENT ID (OPTIONAL OVERRIDE):
+                  <ol className="list-decimal list-inside space-y-1.5 opacity-90 text-[10px] leading-relaxed border-t border-b border-white/15 py-2">
+                    <li>
+                      Open <strong><a href="https://script.new" target="_blank" rel="noreferrer" className="underline text-white font-bold">script.new</a></strong> in your browser (while logged into your Google account).
+                    </li>
+                    <li>
+                      Click the button below to copy the ready-to-use Google Apps Script code, and paste it into the editor (replacing any existing text):
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={handleCopyAppsScript}
+                          className="border border-white bg-white text-black px-2.5 py-1 text-[10px] font-bold uppercase hover:bg-white/80 cursor-pointer"
+                        >
+                          {scriptCopied ? '[✓ COPIED TO CLIPBOARD!]' : '[COPY APPS SCRIPT CODE]'}
+                        </button>
+                      </div>
+                    </li>
+                    <li>
+                      In Google Apps Script, click <strong>Deploy</strong> (top right) &rarr; <strong>New deployment</strong>.
+                    </li>
+                    <li>
+                      Click the gear icon next to &quot;Select type&quot; &rarr; choose <strong>Web app</strong>.
+                    </li>
+                    <li>
+                      Set &quot;Execute as&quot; to <strong>Me</strong>, and set &quot;Who has access&quot; to <strong>Anyone</strong>. Click <strong>Deploy</strong>.
+                    </li>
+                    <li>
+                      Copy the <strong>Web app URL</strong> (it starts with <code className="text-white">https://script.google.com/macros/s/.../exec</code>) and paste it below:
+                    </li>
+                  </ol>
+
+                  <div className="space-y-1.5">
+                    <label className="opacity-80 block text-[10px] uppercase font-bold">
+                      GOOGLE APPS SCRIPT WEB APP URL:
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col sm:flex-row gap-2">
                       <input
-                        type="text"
-                        value={customClientIdInput}
-                        onChange={(e) => setCustomClientIdInput(e.target.value)}
-                        placeholder="e.g. 787072681628-...apps.googleusercontent.com"
-                        className="flex-1 bg-black border border-white/50 px-2 py-1 text-[11px] text-white focus:border-white focus:outline-none font-mono"
+                        type="url"
+                        value={webhookUrlInput}
+                        onChange={(e) => setWebhookUrlInput(e.target.value)}
+                        placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                        className="flex-1 bg-black border border-white/50 px-2 py-1.5 text-[11px] text-white focus:border-white focus:outline-none font-mono"
                       />
                       <button
                         type="button"
-                        onClick={() => {
-                          setCustomOAuthClientId(customClientIdInput);
-                          getOAuthClientId().then(setActiveClientId);
-                          setFeedback('OAUTH CLIENT ID SAVED');
-                          setTimeout(() => setFeedback(null), 3000);
-                        }}
-                        className="border border-white bg-white text-black px-3 py-1 text-[10px] font-bold uppercase hover:bg-white/90 cursor-pointer"
+                        onClick={handleSaveWebhookUrl}
+                        className="border border-white bg-white text-black px-3 py-1.5 text-[10px] font-bold uppercase hover:bg-white/90 cursor-pointer shrink-0"
                       >
-                        SAVE
+                        [SAVE WEBHOOK URL]
                       </button>
                     </div>
-                    <p className="text-[10px] opacity-60 leading-normal">
-                      Tip: If you experience Google OAuth <code className="text-white">origin_mismatch</code>, you can create a Web OAuth Client ID in your Google Cloud Console, add this app domain to Authorized JavaScript Origins, and paste your Client ID above. Alternatively, use the <strong>Download File (.json)</strong> below for 100% offline, zero-setup backups on any device!
-                    </p>
+                    <div className="text-[9px] opacity-60">
+                      Files will automatically be stored in a dedicated &quot;RoutineTrackerBackups&quot; folder in your personal Google Drive.
+                    </div>
                   </div>
                 </div>
               )}

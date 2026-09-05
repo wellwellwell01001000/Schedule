@@ -265,12 +265,12 @@ export function SystemWalkthroughModal({
                 <div className="border border-white/40 p-3 space-y-1 bg-white/5">
                   <div className="font-bold text-white uppercase flex items-center gap-2">
                     <span className="w-2 h-2 bg-white inline-block" />
-                    <span>[SYNC &amp; BACKUP] (1-CLICK GOOGLE DRIVE)</span>
+                    <span>[SYNC &amp; BACKUP] (GOOGLE DRIVE VAULT)</span>
                   </div>
                   <p className="opacity-75 text-[11px] leading-relaxed">
                     Click the <strong>[SYNC &amp; BACKUP]</strong> button in the top header anytime. 
-                    It saves your full routine, logged minutes, and history directly into your Google Drive (<code className="text-white">routine_tracker_sync.json</code>).
-                    Open the app on your phone or laptop and pull your progress anytime!
+                    It saves your full routine, logged minutes, and history directly into your Google Drive vault using a lightweight 6-character Sync Code.
+                    No Google account logins or permission popups needed for users!
                   </p>
                 </div>
 

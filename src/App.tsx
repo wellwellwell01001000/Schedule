@@ -22,12 +22,10 @@ import {
   restoreAllCompletedMap,
 } from './data/backupStore';
 import {
-  requestGoogleDriveAccessToken,
-  uploadToGoogleDrive,
-  findDriveSyncFile,
-  downloadFromGoogleDrive,
-  setLastSyncTime,
-} from './services/googleDriveService';
+  getVaultScriptUrl,
+  saveToDriveVault,
+  getOrCreateSyncCode,
+} from './services/driveVaultService';
 import { ActiveTab, DaySchedule, MonthLogRecord } from './types';
 
 export default function App() {
@@ -96,30 +94,30 @@ export default function App() {
     }
   };
 
-  // Quick 1-Click Google Drive Sync: Backs up data and syncs with cloud
+  // Quick 1-Click Google Drive Vault Sync: Backs up data directly to personal Drive Vault
   const handleQuickDriveSync = async () => {
+    const webhookUrl = getVaultScriptUrl();
+    if (!webhookUrl) {
+      setIsBackupOpen(true);
+      setSyncToast('[DRIVE SETUP REQUIRED] Please paste your Google Apps Script Webhook URL in Backup & Sync.');
+      setTimeout(() => setSyncToast(null), 5000);
+      return;
+    }
+
     setIsQuickSyncing(true);
-    setSyncToast('CONNECTING TO GOOGLE DRIVE...');
+    const code = getOrCreateSyncCode();
+    setSyncToast(`[SAVING TO GOOGLE DRIVE VAULT...] Sync Code: ${code}`);
     try {
-      const token = await requestGoogleDriveAccessToken();
-
-      // Check if remote file exists
-      setSyncToast('CHECKING GOOGLE DRIVE REPOSITORY...');
-      const existing = await findDriveSyncFile(token);
-
       // Create snapshot from current state
       const currentSnap = createSnapshot(schedules, history, 'manual');
 
-      // Upload state to Drive
-      setSyncToast('UPLOADING ROUTINE STATE TO DRIVE...');
-      const result = await uploadToGoogleDrive(token, currentSnap);
-      const nowIso = new Date().toISOString();
-      setLastSyncTime(nowIso);
+      // Upload state to Drive Vault
+      const result = await saveToDriveVault(currentSnap, code);
       saveSnapshotToList(currentSnap);
 
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setSyncToast(`[DRIVE SYNC COMPLETE: ${timeStr}] Routine state saved to Google Drive.`);
-      setTimeout(() => setSyncToast(null), 4000);
+      setSyncToast(`[DRIVE VAULT SYNCED: ${timeStr}] Code: ${result.code} • Saved to your Google Drive!`);
+      setTimeout(() => setSyncToast(null), 4500);
     } catch (err: unknown) {
       console.error('Quick sync error:', err);
       const msg = err instanceof Error ? err.message : 'Google Drive sync failed.';
