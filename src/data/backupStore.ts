@@ -140,6 +140,30 @@ export function checkAndRunNightlyAutoBackup(
   return null;
 }
 
+// Delete a specific snapshot by ID
+export function deleteSnapshotById(id: string): SystemSnapshot[] {
+  const list = getSavedSnapshots();
+  const updated = list.filter((s) => s.id !== id);
+  try {
+    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Failed to update snapshots in localStorage', e);
+  }
+  return updated;
+}
+
+// Clear all manual snapshots, preserving automated/nightly archives
+export function clearManualSnapshots(): SystemSnapshot[] {
+  const list = getSavedSnapshots();
+  const updated = list.filter((s) => s.type !== 'manual');
+  try {
+    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Failed to clear manual snapshots in localStorage', e);
+  }
+  return updated;
+}
+
 // Export snapshot as a downloadable .json file on disk
 export function downloadSnapshotAsJsonFile(snapshot: SystemSnapshot): void {
   const jsonStr = JSON.stringify(snapshot, null, 2);

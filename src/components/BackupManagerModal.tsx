@@ -7,6 +7,8 @@ import {
   downloadSnapshotAsJsonFile,
   parseAndValidateBackupJson,
   restoreAllCompletedMap,
+  deleteSnapshotById,
+  clearManualSnapshots,
 } from '../data/backupStore';
 import {
   getVaultScriptUrl,
@@ -171,6 +173,31 @@ export function BackupManagerModal({
     }
   };
 
+  const handleClearManualSnapshots = () => {
+    const manualCount = snapshots.filter((s) => s.type === 'manual').length;
+    if (manualCount === 0) {
+      setFeedback('NO MANUAL SNAPSHOTS FOUND TO CLEAR.');
+      setTimeout(() => setFeedback(null), 2500);
+      return;
+    }
+    if (window.confirm(`DELETE ALL ${manualCount} MANUAL SNAPSHOT(S)? Automated nightly archives will be preserved.`)) {
+      const remaining = clearManualSnapshots();
+      setSnapshots(remaining);
+      setFeedback(`[CLEARED]: Removed ${manualCount} manual snapshot(s). Automated nightly backups preserved.`);
+      setTimeout(() => setFeedback(null), 3500);
+    }
+  };
+
+  const handleDeleteSnapshot = (snap: SystemSnapshot, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm(`DELETE SNAPSHOT FROM ${snap.displayDate}?`)) {
+      const remaining = deleteSnapshotById(snap.id);
+      setSnapshots(remaining);
+      setFeedback(`[DELETED]: Snapshot from ${snap.displayDate} removed.`);
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  };
+
   const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -332,6 +359,10 @@ export function BackupManagerModal({
                   value={restoreCodeInput}
                   onChange={(e) => setRestoreCodeInput(e.target.value.toUpperCase())}
                   placeholder="ENTER SYNC CODE (e.g. ROUT-8B2F)"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="off"
                   className="flex-1 bg-black border border-white/50 px-3 py-2 text-xs text-white uppercase font-mono focus:border-white focus:outline-none"
                 />
                 <button
@@ -418,9 +449,25 @@ export function BackupManagerModal({
 
           {/* Saved Snapshots List */}
           <div className="space-y-2 border-t border-white/20 pt-4">
-            <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider opacity-80">
-              <span>SAVED SNAPSHOT ARCHIVES ({snapshots.length})</span>
-              <span className="text-[10px] opacity-60">KEPT IN PERSISTENT REGISTRY</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wider">
+              <div className="flex items-center gap-2">
+                <span className="opacity-80">SAVED SNAPSHOT ARCHIVES ({snapshots.length})</span>
+                <span className="text-[10px] opacity-60 font-normal">
+                  ({snapshots.filter((s) => s.type === 'manual').length} manual, {snapshots.filter((s) => s.type === 'nightly').length} nightly)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {snapshots.some((s) => s.type === 'manual') && (
+                  <button
+                    onClick={handleClearManualSnapshots}
+                    className="border border-white/60 text-white hover:bg-white hover:text-black px-2 py-0.5 text-[10px] font-bold uppercase transition-none cursor-pointer"
+                    title="Delete all manual snapshots while keeping nightly archives"
+                  >
+                    [CLEAR MANUAL SNAPSHOTS ({snapshots.filter((s) => s.type === 'manual').length})]
+                  </button>
+                )}
+                <span className="text-[10px] opacity-60 hidden sm:inline">KEPT IN REGISTRY</span>
+              </div>
             </div>
 
             {/* Mobile Installation Guide (iOS & Android) */}
@@ -500,6 +547,13 @@ export function BackupManagerModal({
                         className="border border-white/40 px-2 py-1 text-[11px] hover:border-white text-white cursor-pointer uppercase"
                       >
                         [.JSON]
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteSnapshot(snap, e)}
+                        className="border border-white/30 text-white/70 hover:border-white hover:text-white px-2 py-1 text-[11px] cursor-pointer uppercase"
+                        title="Delete this snapshot"
+                      >
+                        [DELETE]
                       </button>
                     </div>
                   </div>
