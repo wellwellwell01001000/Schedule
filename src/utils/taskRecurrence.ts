@@ -1,4 +1,5 @@
 import { DayKey, DaySchedule, TaskItem } from '../types';
+import { sortTasksByStartTime } from './taskSorting';
 
 /**
  * Checks if two tasks represent the same logical recurring routine.
@@ -276,10 +277,12 @@ export function applyTaskEdit(
     if (sched) {
       updated[currentDay] = {
         ...sched,
-        tasks: sched.tasks.map((t) =>
-          t.id === originalTask.id
-            ? { ...t, ...updatedFields }
-            : t
+        tasks: sortTasksByStartTime(
+          sched.tasks.map((t) =>
+            t.id === originalTask.id
+              ? { ...t, ...updatedFields }
+              : t
+          )
         ),
       };
     }
@@ -302,10 +305,12 @@ export function applyTaskEdit(
         // Update task on this day
         updated[dKey] = {
           ...sched,
-          tasks: sched.tasks.map((t) =>
-            isSameRoutine(t, originalTask) || t.id === originalTask.id
-              ? { ...t, ...updatedFields }
-              : t
+          tasks: sortTasksByStartTime(
+            sched.tasks.map((t) =>
+              isSameRoutine(t, originalTask) || t.id === originalTask.id
+                ? { ...t, ...updatedFields }
+                : t
+            )
           ),
         };
       } else if (hasTask && !shouldHaveTask) {
@@ -325,7 +330,7 @@ export function applyTaskEdit(
         };
         updated[dKey] = {
           ...sched,
-          tasks: [...sched.tasks, newTask],
+          tasks: sortTasksByStartTime([...sched.tasks, newTask]),
         };
       }
     }

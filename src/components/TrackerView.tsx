@@ -13,6 +13,7 @@ import {
   applyTaskEdit,
   TaskDayMatch,
 } from '../utils/taskRecurrence';
+import { sortTasksByStartTime } from '../utils/taskSorting';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
@@ -382,7 +383,7 @@ export function TrackerView({
       if (updatedSchedules[dKey]) {
         updatedSchedules[dKey] = {
           ...updatedSchedules[dKey],
-          tasks: [...updatedSchedules[dKey].tasks, { ...newTask }],
+          tasks: sortTasksByStartTime([...updatedSchedules[dKey].tasks, { ...newTask }]),
         };
       }
     }
@@ -397,9 +398,9 @@ export function TrackerView({
     setIsAddingTask(false);
   };
 
-  // Scheduled tasks count vs total
-  const scheduledTasks = currentSchedule.tasks.filter((t) => t.isScheduled !== false);
-  const descheduledTasks = currentSchedule.tasks.filter((t) => t.isScheduled === false);
+  // Scheduled tasks count vs total - strictly sorted by start time
+  const scheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled !== false));
+  const descheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled === false));
   const completedCount = scheduledTasks.filter((t) => completedTaskIds.includes(t.id)).length;
   const totalTasks = scheduledTasks.length;
   const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
