@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TaskItem, TaskCategory, DayKey, DaySchedule } from '../types';
 import { findRoutineMatches, TaskDayMatch } from '../utils/taskRecurrence';
+import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
 
 interface EditTaskModalProps {
   isOpen: boolean;
@@ -143,34 +144,16 @@ export function EditTaskModal({
             </div>
           </div>
 
-          {/* Time Slot & Duration */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-[11px] opacity-70 uppercase font-bold block">
-                TIME SLOT (E.G. 07:00 – 08:30)
-              </label>
-              <input
-                type="text"
-                value={timeSlot}
-                onChange={(e) => setTimeSlot(e.target.value)}
-                placeholder="19:00 – 20:00"
-                className="w-full bg-black border border-white/60 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[11px] opacity-70 uppercase font-bold block">
-                PLANNED DURATION (MINUTES)
-              </label>
-              <input
-                type="number"
-                value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value, 10) || 0)}
-                min={5}
-                max={480}
-                className="w-full bg-black border border-white/60 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
-              />
-            </div>
+          {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
+          <div className="space-y-1">
+            <TaskTimeBlockPicker
+              timeSlot={timeSlot}
+              durationMinutes={duration}
+              onChange={(newSlot, newDur) => {
+                setTimeSlot(newSlot);
+                setDuration(newDur);
+              }}
+            />
           </div>
 
           {/* Details / Notes */}

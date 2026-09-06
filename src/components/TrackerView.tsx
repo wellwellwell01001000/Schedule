@@ -17,6 +17,7 @@ import { sortTasksByStartTime } from '../utils/taskSorting';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
+import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
 import { setLocalLastModified } from '../services/driveVaultService';
 
 interface TrackerViewProps {
@@ -659,39 +660,25 @@ export function TrackerView({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="space-y-1">
-                <label className="text-[11px] opacity-70 uppercase font-bold block">
-                  TIME SLOT
-                </label>
-                <input
-                  type="text"
-                  value={newTimeSlot}
-                  onChange={(e) => setNewTimeSlot(e.target.value)}
-                  placeholder="19:00 – 20:00"
-                  className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
-                />
-              </div>
+            {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
+            <div className="space-y-1">
+              <TaskTimeBlockPicker
+                timeSlot={newTimeSlot}
+                durationMinutes={newDuration}
+                onChange={(newSlot, newDur) => {
+                  setNewTimeSlot(newSlot);
+                  setNewDuration(newDur);
+                }}
+              />
+            </div>
 
-              <div className="space-y-1">
-                <label className="text-[11px] opacity-70 uppercase font-bold block">
-                  PLANNED DURATION (MINUTES)
-                </label>
-                <input
-                  type="number"
-                  value={newDuration}
-                  onChange={(e) => setNewDuration(parseInt(e.target.value, 10) || 0)}
-                  min={5}
-                  max={480}
-                  className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] opacity-70 uppercase font-bold block">
-                  RECURRENCE TYPE
-                </label>
-                <div className="flex items-center gap-3 pt-1">
+            {/* Recurrence Type */}
+            <div className="border border-white/20 p-3 bg-white/5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] opacity-70 uppercase font-bold">
+                  RECURRENCE TYPE:
+                </span>
+                <div className="flex items-center gap-3">
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="radio"
