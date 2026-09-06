@@ -17,6 +17,7 @@ import { sortTasksByStartTime } from '../utils/taskSorting';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
+import { setLocalLastModified } from '../services/driveVaultService';
 
 interface TrackerViewProps {
   selectedDay: string;
@@ -143,6 +144,7 @@ export function TrackerView({
     setCompletedTaskIds(newIds);
     try {
       localStorage.setItem(`alt_routine_completed_${selectedDay}`, JSON.stringify(newIds));
+      setLocalLastModified();
     } catch {
       // ignore
     }

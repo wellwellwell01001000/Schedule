@@ -60,17 +60,17 @@ export function Header({
               onClick={onQuickDriveSync}
               disabled={isSyncing}
               className="border-2 border-white bg-white text-black px-3.5 py-1.5 text-xs hover:bg-white/90 transition-none cursor-pointer uppercase font-black flex items-center gap-2 disabled:opacity-50 shadow-md"
-              title={`Instantly sync your tasks and logs to Google Drive cloud vault (Code: ${syncCode || 'ACTIVE'})`}
+              title={`Smart 2-Way Sync: Compares timestamps and prompts to Fetch latest (if Cloud is newer) or Upload (if this device is newer). Code: ${syncCode || 'ACTIVE'}`}
             >
               {isSyncing ? (
                 <>
                   <span className="inline-block w-2 h-2 bg-black animate-ping" />
-                  <span>SYNCING CLOUD...</span>
+                  <span>CHECKING REVISIONS...</span>
                 </>
               ) : (
                 <>
-                  <span className="text-sm leading-none font-bold">☁</span>
-                  <span>[SYNC TO CLOUD]</span>
+                  <span className="text-sm leading-none font-bold">⇅</span>
+                  <span>[SYNC]</span>
                   {syncCode && (
                     <span className="bg-black text-white px-1.5 py-0.5 text-[10px] font-mono tracking-wider">
                       {syncCode}

@@ -11,6 +11,7 @@ import { SystemSnapshot } from '../data/backupStore';
 const STORAGE_VAULT_URL_KEY = 'routine_drive_vault_script_url_v1';
 const STORAGE_SYNC_CODE_KEY = 'routine_tracker_sync_code_v1';
 const STORAGE_LAST_SYNC_KEY = 'routine_drive_vault_last_sync_v1';
+const STORAGE_LOCAL_LAST_MODIFIED_KEY = 'routine_tracker_local_last_modified_v1';
 
 // Default / fallback Webhook URL if pre-configured
 const DEFAULT_VAULT_URL = 'https://script.google.com/macros/s/AKfycbzaN3PKBczOIycME0s-nyJIk3EYW-u-Vs52t0CNlKx6kdQXeXzvZkh8oPk_5JDSjtbW/exec';
@@ -115,6 +116,30 @@ export function setVaultLastSync(isoStr: string): void {
 }
 
 /**
+ * Local state modification timestamp tracking
+ */
+export function getLocalLastModified(): string {
+  try {
+    const val = localStorage.getItem(STORAGE_LOCAL_LAST_MODIFIED_KEY);
+    if (val) return val;
+  } catch {
+    // ignore
+  }
+  const lastSync = getVaultLastSync();
+  if (lastSync) return lastSync;
+  return new Date(0).toISOString();
+}
+
+export function setLocalLastModified(isoStr?: string): void {
+  try {
+    const val = isoStr || new Date().toISOString();
+    localStorage.setItem(STORAGE_LOCAL_LAST_MODIFIED_KEY, val);
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Save routine state to the Google Drive Cloud Vault
  */
 export async function saveToDriveVault(
@@ -155,6 +180,7 @@ export async function saveToDriveVault(
 
     const nowIso = new Date().toISOString();
     setVaultLastSync(nowIso);
+    setLocalLastModified(nowIso);
 
     return {
       success: true,
