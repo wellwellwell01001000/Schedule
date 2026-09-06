@@ -60,12 +60,12 @@ export function Header({
               onClick={onQuickDriveSync}
               disabled={isSyncing}
               className="border-2 border-white bg-white text-black px-3.5 py-1.5 text-xs hover:bg-white/90 transition-none cursor-pointer uppercase font-black flex items-center gap-2 disabled:opacity-50 shadow-md"
-              title={`Smart 2-Way Sync: Compares timestamps and prompts to Fetch latest (if Cloud is newer) or Upload (if this device is newer). Code: ${syncCode || 'ACTIVE'}`}
+              title={`Google Drive Cloud Sync: Choose Fetch from Cloud or Upload to Cloud (Code: ${syncCode || 'ACTIVE'})`}
             >
               {isSyncing ? (
                 <>
                   <span className="inline-block w-2 h-2 bg-black animate-ping" />
-                  <span>CHECKING REVISIONS...</span>
+                  <span>SYNCING...</span>
                 </>
               ) : (
                 <>

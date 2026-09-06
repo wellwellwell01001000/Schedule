@@ -6,6 +6,7 @@ import { TaskTimeAuditView } from './components/TaskTimeAuditView';
 import { BackupManagerModal } from './components/BackupManagerModal';
 import { SystemWalkthroughModal } from './components/SystemWalkthroughModal';
 import { RoutineTemplatesModal } from './components/RoutineTemplatesModal';
+import { SyncChoiceModal } from './components/SyncChoiceModal';
 import { RoutineTemplate } from './data/scheduleTemplates';
 import { getDayKeyFromDate } from './utils/ascii';
 import {
@@ -31,6 +32,7 @@ import {
   getLocalLastModified,
   setLocalLastModified,
   setVaultLastSync,
+  getVaultLastSync,
 } from './services/driveVaultService';
 import { ActiveTab, DaySchedule, MonthLogRecord } from './types';
 
@@ -39,6 +41,7 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState<string>(() => getDayKeyFromDate());
   const [isBackupOpen, setIsBackupOpen] = useState<boolean>(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState<boolean>(false);
+  const [isSyncChoiceOpen, setIsSyncChoiceOpen] = useState<boolean>(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem('routine_tracker_tutorial_seen_v1') !== 'true';
@@ -111,12 +114,8 @@ export default function App() {
     }
   };
 
-  // Smart Git-Style 2-Way Google Drive Vault Sync:
-  // Compares cloud revision timestamp vs local device modification timestamp.
-  // • If Cloud is newer: asks confirmation to FETCH / PULL down changes.
-  // • If Local is newer: asks confirmation to UPLOAD / PUSH up changes.
-  // • If in sync: informs user and offers optional re-upload.
-  const handleQuickDriveSync = async () => {
+  // Two-Option Google Drive Sync: User directly chooses Fetch (Pull) or Upload (Push)
+  const handleFetchFromCloud = async () => {
     const webhookUrl = getVaultScriptUrl();
     if (!webhookUrl) {
       setIsBackupOpen(true);
@@ -126,150 +125,77 @@ export default function App() {
     }
 
     setIsQuickSyncing(true);
-    const code = getOrCreateSyncCode();
-    setSyncToast(`[CHECKING REVISIONS...] Querying cloud vault for Code: ${code}`);
-
+    setSyncToast(`[FETCHING FROM CLOUD...] Downloading Code: ${syncCode}`);
     try {
-      // Step 1: Query remote cloud file for this sync code
-      let cloudSnapshot: SystemSnapshot | null = null;
-      try {
-        const remoteData = await loadFromDriveVault(code);
-        const rawJson = typeof remoteData === 'string' ? remoteData : JSON.stringify(remoteData);
-        cloudSnapshot = parseAndValidateBackupJson(rawJson);
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (
-          errMsg.toLowerCase().includes('no backup found') ||
-          errMsg.toLowerCase().includes('not found')
-        ) {
-          cloudSnapshot = null;
-        } else {
-          throw err;
-        }
+      const remoteData = await loadFromDriveVault(syncCode);
+      const rawJson = typeof remoteData === 'string' ? remoteData : JSON.stringify(remoteData);
+      const cloudSnapshot = parseAndValidateBackupJson(rawJson);
+
+      // Create safety snapshot in local archive before pulling
+      const safetySnap = createSnapshot(schedules, history, 'manual');
+      saveSnapshotToList(safetySnap);
+
+      // Apply cloud snapshot
+      if (cloudSnapshot.completedMap) {
+        restoreAllCompletedMap(cloudSnapshot.completedMap);
       }
+      handleRestoreSystem(cloudSnapshot.schedules, cloudSnapshot.history || [], cloudSnapshot.createdAt);
+      setStoredSyncCode(syncCode);
+      setVaultLastSync(cloudSnapshot.createdAt);
 
-      const localModifiedIso = getLocalLastModified();
-      const localTime = new Date(localModifiedIso).getTime();
-      const localDateFormatted = new Date(localTime).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-
-      // Case 1: No cloud backup exists yet for this code -> Prompt to Upload initial
-      if (!cloudSnapshot) {
-        const confirmUpload = window.confirm(
-          `[INITIAL CLOUD SETUP]\n\nNo cloud backup was found for Code "${code}".\n\nDo you wish to UPLOAD your current routine to initialize this sync code on Google Drive?`
-        );
-        if (!confirmUpload) {
-          setSyncToast('[SYNC CANCELLED]: Cloud upload aborted.');
-          setTimeout(() => setSyncToast(null), 3500);
-          return;
-        }
-
-        const currentSnap = createSnapshot(schedules, history, 'manual');
-        const result = await saveToDriveVault(currentSnap, code);
-        saveSnapshotToList(currentSnap);
-        setLocalLastModified(result.updatedAt || currentSnap.createdAt);
-        setVaultLastSync(result.updatedAt || currentSnap.createdAt);
-        setSyncCode(result.code);
-        setSyncToast(`[✓ INITIALIZED CLOUD: ${localDateFormatted}] Code ${result.code} saved to Google Drive!`);
-        setTimeout(() => setSyncToast(null), 5000);
-        return;
-      }
-
-      // Case 2: Cloud backup exists -> Compare timestamps
-      const cloudTime = new Date(cloudSnapshot.createdAt).getTime();
-      const cloudDateFormatted =
+      const timeStr =
         cloudSnapshot.displayDate ||
-        new Date(cloudTime).toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-
-      const timeDiff = cloudTime - localTime;
-
-      // Subcase 2A: Cloud is NEWER than local device by > 2000ms -> PULL / FETCH
-      if (timeDiff > 2000) {
-        const confirmFetch = window.confirm(
-          `[CLOUD HAS NEWER DATA]\n\n• Cloud file updated: ${cloudDateFormatted}\n• This device last edited: ${localDateFormatted}\n\nThe cloud backup is NEWER than this device.\n\nDo you wish to FETCH and update this device with the latest cloud version?`
-        );
-
-        if (!confirmFetch) {
-          setSyncToast('[SYNC CANCELLED]: Fetch aborted. Local routine preserved.');
-          setTimeout(() => setSyncToast(null), 3500);
-          return;
-        }
-
-        // Create safety backup in local archive before pulling
-        const safetySnap = createSnapshot(schedules, history, 'manual');
-        saveSnapshotToList(safetySnap);
-
-        // Apply cloud snapshot
-        if (cloudSnapshot.completedMap) {
-          restoreAllCompletedMap(cloudSnapshot.completedMap);
-        }
-        handleRestoreSystem(cloudSnapshot.schedules, cloudSnapshot.history || [], cloudSnapshot.createdAt);
-        setStoredSyncCode(code);
-        setSyncCode(code);
-        setVaultLastSync(cloudSnapshot.createdAt);
-
-        setSyncToast(`[✓ PULLED FROM CLOUD]: Updated to ${cloudDateFormatted} version!`);
-        setTimeout(() => setSyncToast(null), 5000);
-        return;
-      }
-
-      // Subcase 2B: Local device is NEWER than cloud by > 2000ms -> PUSH / UPLOAD
-      if (timeDiff < -2000) {
-        const confirmUpload = window.confirm(
-          `[LOCAL DEVICE HAS NEWER DATA]\n\n• This device last edited: ${localDateFormatted}\n• Cloud file updated: ${cloudDateFormatted}\n\nThis device is NEWER than the cloud.\n\nDo you wish to UPLOAD your latest local changes to overwrite the cloud backup?`
-        );
-
-        if (!confirmUpload) {
-          setSyncToast('[SYNC CANCELLED]: Upload aborted. Cloud remains unchanged.');
-          setTimeout(() => setSyncToast(null), 3500);
-          return;
-        }
-
-        const currentSnap = createSnapshot(schedules, history, 'manual');
-        const result = await saveToDriveVault(currentSnap, code);
-        saveSnapshotToList(currentSnap);
-        setLocalLastModified(result.updatedAt || currentSnap.createdAt);
-        setVaultLastSync(result.updatedAt || currentSnap.createdAt);
-        setSyncCode(result.code);
-
-        setSyncToast(`[✓ PUSHED TO CLOUD: ${localDateFormatted}] Code ${result.code} updated on Google Drive!`);
-        setTimeout(() => setSyncToast(null), 5000);
-        return;
-      }
-
-      // Subcase 2C: Both are already in sync (within 2 seconds)
-      const confirmForce = window.confirm(
-        `[ALREADY IN SYNC]\n\nBoth this device and the cloud are up to date (around ${cloudDateFormatted}).\n\nDo you still wish to force an UPLOAD of your current local data to the cloud?`
-      );
-
-      if (confirmForce) {
-        const currentSnap = createSnapshot(schedules, history, 'manual');
-        const result = await saveToDriveVault(currentSnap, code);
-        saveSnapshotToList(currentSnap);
-        setLocalLastModified(result.updatedAt || currentSnap.createdAt);
-        setVaultLastSync(result.updatedAt || currentSnap.createdAt);
-        setSyncCode(result.code);
-        setSyncToast(`[✓ RE-UPLOADED TO CLOUD]: Overwrite complete.`);
-        setTimeout(() => setSyncToast(null), 4500);
-      } else {
-        setSyncToast(`[✓ UP TO DATE]: Local device and cloud are already in sync.`);
-        setTimeout(() => setSyncToast(null), 4000);
-      }
+        new Date(cloudSnapshot.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setSyncToast(`[✓ FETCHED FROM CLOUD]: Updated to ${timeStr} version!`);
+      setTimeout(() => setSyncToast(null), 5000);
     } catch (err: unknown) {
-      console.error('Quick sync error:', err);
-      const msg = err instanceof Error ? err.message : 'Google Drive sync failed.';
-      setSyncToast(`SYNC FAILED: ${msg}`);
+      console.error('Fetch error:', err);
+      const msg = err instanceof Error ? err.message : 'Fetch from Google Drive failed.';
+      setSyncToast(`FETCH FAILED: ${msg}`);
       setTimeout(() => setSyncToast(null), 6000);
+      throw err;
     } finally {
       setIsQuickSyncing(false);
     }
+  };
+
+  const handleUploadToCloud = async () => {
+    const webhookUrl = getVaultScriptUrl();
+    if (!webhookUrl) {
+      setIsBackupOpen(true);
+      setSyncToast('[DRIVE SETUP REQUIRED] Please paste your Google Apps Script Webhook URL in Backup & Sync.');
+      setTimeout(() => setSyncToast(null), 5000);
+      return;
+    }
+
+    setIsQuickSyncing(true);
+    setSyncToast(`[UPLOADING TO CLOUD...] Saving to Code: ${syncCode}`);
+    try {
+      const currentSnap = createSnapshot(schedules, history, 'manual');
+      const result = await saveToDriveVault(currentSnap, syncCode);
+      saveSnapshotToList(currentSnap);
+      setLocalLastModified(result.updatedAt || currentSnap.createdAt);
+      setVaultLastSync(result.updatedAt || currentSnap.createdAt);
+      setSyncCode(result.code);
+      setStoredSyncCode(result.code);
+
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setSyncToast(`[✓ UPLOADED TO CLOUD: ${timeStr}]: Saved under Code ${result.code}!`);
+      setTimeout(() => setSyncToast(null), 5000);
+    } catch (err: unknown) {
+      console.error('Upload error:', err);
+      const msg = err instanceof Error ? err.message : 'Upload to Google Drive failed.';
+      setSyncToast(`UPLOAD FAILED: ${msg}`);
+      setTimeout(() => setSyncToast(null), 6000);
+      throw err;
+    } finally {
+      setIsQuickSyncing(false);
+    }
+  };
+
+  const handleSetSyncCode = (newCode: string) => {
+    setSyncCode(newCode);
+    setStoredSyncCode(newCode);
   };
 
   // Keyboard shortcut listener for terminal-style navigation [1], [2], [3]
@@ -301,7 +227,7 @@ export default function App() {
           onOpenTemplates={() => setIsTemplatesOpen(true)}
           onOpenBackup={() => setIsBackupOpen(true)}
           onOpenTutorial={() => setIsTutorialOpen(true)}
-          onQuickDriveSync={handleQuickDriveSync}
+          onQuickDriveSync={() => setIsSyncChoiceOpen(true)}
           isSyncing={isQuickSyncing}
           syncCode={syncCode}
         />
@@ -373,6 +299,18 @@ export default function App() {
           isOpen={isTutorialOpen}
           onClose={() => setIsTutorialOpen(false)}
           onPurgeAndStartClean={handlePurgeAndStartClean}
+        />
+
+        {/* Two-Option Google Drive Sync Dispatch Modal */}
+        <SyncChoiceModal
+          isOpen={isSyncChoiceOpen}
+          onClose={() => setIsSyncChoiceOpen(false)}
+          syncCode={syncCode}
+          onSetSyncCode={handleSetSyncCode}
+          onFetchFromCloud={handleFetchFromCloud}
+          onUploadToCloud={handleUploadToCloud}
+          isBusy={isQuickSyncing}
+          lastSyncTime={getVaultLastSync()}
         />
 
         {/* Editorial Aesthetic Footer */}
