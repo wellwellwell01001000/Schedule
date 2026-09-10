@@ -13,7 +13,7 @@ import {
   applyTaskEdit,
   TaskDayMatch,
 } from '../utils/taskRecurrence';
-import { sortTasksByStartTime } from '../utils/taskSorting';
+import { sortTasksByStartTime, parseTimeSlotRange } from '../utils/taskSorting';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
@@ -28,30 +28,6 @@ interface TrackerViewProps {
   onRefreshHistory: () => void;
   onOpenTemplates?: () => void;
   onOpenBulkIngest?: () => void;
-}
-
-// Helper to parse time slot like "07:00 – 08:10" into start and end minutes from midnight
-function parseSlotMinutes(timeStr: string): { start: number; end: number } | null {
-  try {
-    const parts = timeStr.split(/[-–—]/).map((s) => s.trim());
-    if (parts.length !== 2) return null;
-    const [startStr, endStr] = parts;
-    const [startH, startM] = startStr.split(':').map(Number);
-    const [endH, endM] = endStr.split(':').map(Number);
-    if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return null;
-    return { start: startH * 60 + startM, end: endH * 60 + endM };
-  } catch {
-    return null;
-  }
-}
-
-// Helper to check if the current time falls inside a time slot like "07:00 – 08:10" or "19:15 - 20:45"
-function isCurrentTimeInSlot(timeStr: string): boolean {
-  const slot = parseSlotMinutes(timeStr);
-  if (!slot) return false;
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  return currentMinutes >= slot.start && currentMinutes <= slot.end;
 }
 
 
@@ -113,6 +89,16 @@ export function TrackerView({
   const [activeTimerTaskId, setActiveTimerTaskId] = useState<string | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Live ticking clock to keep directive in sync with real-world time (every 10s)
+  const [currentClock, setCurrentClock] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentClock(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Reload completed tasks when day changes
   useEffect(() => {
@@ -414,57 +400,85 @@ export function TrackerView({
   const pendingScheduledTasks = scheduledTasks.filter((t) => !completedTaskIds.includes(t.id));
 
   // Current real-time clock
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const currentTimeDisplay = `${String(now.getHours()).padStart(2, '0')}:${String(
-    now.getMinutes()
+  const currentMinutes = currentClock.getHours() * 60 + currentClock.getMinutes();
+  const currentTimeDisplay = `${String(currentClock.getHours()).padStart(2, '0')}:${String(
+    currentClock.getMinutes()
   ).padStart(2, '0')}`;
+  const todayDayName = schedules[todayKey]?.dayName || 'Today';
+
+  // Map pending scheduled tasks with their parsed time range
+  const pendingWithSlots = pendingScheduledTasks.map((t) => ({
+    task: t,
+    slot: parseTimeSlotRange(t.time, t.durationMinutes),
+  }));
 
   // 1. Check if user is currently running a live stopwatch on a task
   const runningTimerTask = activeTimerTaskId
     ? scheduledTasks.find((t) => t.id === activeTimerTaskId)
     : undefined;
 
-  // 2. Check if real-time clock falls inside an uncompleted task's time slot
+  // 2. Check if real-time clock falls inside an uncompleted task's time slot (only when viewing today)
   const matchedSlotTask = isToday
-    ? pendingScheduledTasks.find((t) => isCurrentTimeInSlot(t.time))
+    ? pendingWithSlots.find(
+        (item) =>
+          item.slot &&
+          currentMinutes >= item.slot.start &&
+          currentMinutes < item.slot.end
+      )?.task
     : undefined;
 
-  // 3. If no task actively matches right now, find the UPCOMING scheduled task:
-  let upcomingTaskByTime: TaskItem | undefined;
-  if (isToday) {
-    const futurePending = pendingScheduledTasks
-      .map((t) => ({ task: t, slot: parseSlotMinutes(t.time) }))
-      .filter((item) => item.slot && item.slot.start >= currentMinutes)
-      .sort((a, b) => a.slot!.start - b.slot!.start);
+  // 3. Find future scheduled tasks whose start time is strictly after currentMinutes
+  const futurePending = isToday
+    ? pendingWithSlots
+        .filter((item) => item.slot && item.slot.start > currentMinutes)
+        .sort((a, b) => a.slot!.start - b.slot!.start)
+    : [];
+  const upcomingTaskByTime = futurePending.length > 0 ? futurePending[0].task : undefined;
 
-    if (futurePending.length > 0) {
-      upcomingTaskByTime = futurePending[0].task;
-    }
-  }
+  // 4. Overdue / backlog tasks whose scheduled end time was earlier than currentMinutes
+  const overduePending = isToday
+    ? pendingWithSlots
+        .filter((item) => item.slot && item.slot.end <= currentMinutes)
+        .sort((a, b) => a.slot!.start - b.slot!.start)
+    : [];
 
-  // Fallback next pending task in list sequence
-  const fallbackNextTask = pendingScheduledTasks.length > 0 ? pendingScheduledTasks[0] : null;
-
-  // Whether a task is actively occurring right now (clock is in its slot or stopwatch running)
-  const isDirectlyInSession = !!(runningTimerTask || matchedSlotTask);
-
-  // The task to display in Current Directive:
-  // If actively in session, that task is focused.
-  // When no task is scheduled at the present time, focus on the upcoming task!
-  const currentFocusTask: TaskItem | null =
-    runningTimerTask || matchedSlotTask || upcomingTaskByTime || fallbackNextTask;
-
-  // Find the NEXT upcoming task after currentFocusTask:
+  // Directive Mode determination
+  type DirectiveMode = 'PREVIEW' | 'IN_SESSION' | 'UPCOMING' | 'OVERDUE' | 'COMPLETED' | 'EMPTY';
+  let directiveMode: DirectiveMode = 'EMPTY';
+  let currentFocusTask: TaskItem | null = null;
   let nextUpcomingTask: TaskItem | null = null;
-  if (currentFocusTask) {
-    const focusIndex = pendingScheduledTasks.findIndex((t) => t.id === currentFocusTask.id);
-    if (focusIndex !== -1 && focusIndex + 1 < pendingScheduledTasks.length) {
-      nextUpcomingTask = pendingScheduledTasks[focusIndex + 1];
-    } else if (focusIndex === -1 && pendingScheduledTasks.length > 0) {
-      nextUpcomingTask = pendingScheduledTasks[0];
-    }
+
+  if (scheduledTasks.length === 0) {
+    directiveMode = 'EMPTY';
+  } else if (pendingScheduledTasks.length === 0) {
+    directiveMode = 'COMPLETED';
+  } else if (!isToday) {
+    // Inspecting a different day in the schedule cycle
+    directiveMode = 'PREVIEW';
+    currentFocusTask = pendingScheduledTasks[0];
+    nextUpcomingTask = pendingScheduledTasks.length > 1 ? pendingScheduledTasks[1] : null;
+  } else if (runningTimerTask || matchedSlotTask) {
+    // Actively in session (live stopwatch or current time slot match)
+    directiveMode = 'IN_SESSION';
+    currentFocusTask = (runningTimerTask || matchedSlotTask)!;
+    nextUpcomingTask = upcomingTaskByTime || pendingScheduledTasks.find((t) => t.id !== currentFocusTask!.id) || null;
+  } else if (upcomingTaskByTime) {
+    // Standby before the next upcoming routine block
+    directiveMode = 'UPCOMING';
+    currentFocusTask = upcomingTaskByTime;
+    nextUpcomingTask = futurePending.length > 1 ? futurePending[1].task : null;
+  } else if (overduePending.length > 0) {
+    // All scheduled routine hours for today have ended, but past tasks remain open!
+    directiveMode = 'OVERDUE';
+    currentFocusTask = overduePending[0].task;
+    nextUpcomingTask = overduePending.length > 1 ? overduePending[1].task : null;
+  } else {
+    // Fallback if no slots matched
+    currentFocusTask = pendingScheduledTasks[0];
+    nextUpcomingTask = pendingScheduledTasks.length > 1 ? pendingScheduledTasks[1] : null;
   }
+
+  const isDirectlyInSession = directiveMode === 'IN_SESSION';
 
   const asciiBar = generateAsciiProgressBar(completedCount, totalTasks, barWidth, asciiStyle);
 
@@ -817,27 +831,70 @@ export function TrackerView({
               <div className="border-2 border-white bg-white text-black p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/20 pb-2">
                   <div className="flex items-center gap-2">
-                    <span className={`inline-block w-2.5 h-2.5 bg-black ${isDirectlyInSession ? 'animate-ping' : ''}`} />
+                    <span
+                      className={`inline-block w-2.5 h-2.5 bg-black ${
+                        isDirectlyInSession ? 'animate-ping' : ''
+                      }`}
+                    />
                     <span className="text-xs font-black uppercase tracking-wider">
-                      {isDirectlyInSession
+                      {directiveMode === 'PREVIEW'
+                        ? `_SCHEDULED_DIRECTIVE // PREVIEWING ${currentSchedule.dayName.toUpperCase()}`
+                        : directiveMode === 'IN_SESSION'
                         ? '_CURRENT_DIRECTIVE // ACTIVE IN-PROGRESS'
-                        : `_CURRENT_DIRECTIVE // STANDBY (NO TASK AT ${currentTimeDisplay})`}
+                        : directiveMode === 'UPCOMING'
+                        ? `_CURRENT_DIRECTIVE // STANDBY (NO TASK AT ${currentTimeDisplay})`
+                        : `_CURRENT_DIRECTIVE // DAY ROUTINES CONCLUDED (${currentTimeDisplay})`}
                     </span>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-widest bg-black text-white px-2 py-0.5">
-                    {activeTimerTaskId === currentFocusTask.id
+                    {directiveMode === 'PREVIEW'
+                      ? `PREVIEWING ${currentSchedule.dayName.toUpperCase()}`
+                      : activeTimerTaskId === currentFocusTask.id
                       ? 'STOPWATCH RUNNING'
                       : matchedSlotTask?.id === currentFocusTask.id
                       ? 'CURRENT TIME SLOT MATCH'
-                      : 'NEXT UPCOMING TASK'}
+                      : directiveMode === 'UPCOMING'
+                      ? 'NEXT UPCOMING TASK'
+                      : `OVERDUE BACKLOG (${overduePending.length} PENDING)`}
                   </span>
                 </div>
+
+                {/* Day Context Switcher Banner if Previewing another day */}
+                {directiveMode === 'PREVIEW' && (
+                  <div className="bg-black/5 border border-black/20 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-[11px] text-black/70">
+                      Viewing schedule for <strong>{currentSchedule.dayName}</strong>. Today is <strong>{todayDayName}</strong>.
+                    </span>
+                    <button
+                      onClick={() => setSelectedDay(todayKey)}
+                      className="text-[10px] font-bold bg-black text-white px-2 py-0.5 uppercase hover:bg-black/80 transition-none cursor-pointer"
+                    >
+                      [SWITCH TO TODAY ({todayKey.toUpperCase()})]
+                    </button>
+                  </div>
+                )}
+
+                {/* Notice if upcoming has earlier overdue tasks */}
+                {directiveMode === 'UPCOMING' && overduePending.length > 0 && (
+                  <div className="bg-black/5 border border-black/20 px-3 py-1 text-[11px] text-black/80 flex items-center justify-between">
+                    <span>
+                      Notice: <strong>{overduePending.length} task(s)</strong> from earlier today remain uncompleted.
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="space-y-1 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-base md:text-lg font-black tracking-tight">
-                        {!isDirectlyInSession ? 'NEXT: ' : ''}{currentFocusTask.title}
+                        {directiveMode === 'UPCOMING'
+                          ? 'NEXT: '
+                          : directiveMode === 'OVERDUE'
+                          ? 'OVERDUE: '
+                          : directiveMode === 'PREVIEW'
+                          ? 'TARGET: '
+                          : ''}
+                        {currentFocusTask.title}
                       </span>
                       <span className="text-[10px] uppercase border border-black px-1.5 py-0 font-bold">
                         {currentFocusTask.category}
@@ -848,15 +905,25 @@ export function TrackerView({
                       <span className="text-xs font-mono font-bold bg-black text-white px-2 py-0.5">
                         {currentFocusTask.timeSpentMinutes || 0}m / {currentFocusTask.durationMinutes}m planned
                       </span>
-                      {!isDirectlyInSession && (
+                      {directiveMode === 'UPCOMING' && (
                         <span className="bg-black text-white text-[9px] font-bold px-1.5 py-0 tracking-wider">
                           UPCOMING
+                        </span>
+                      )}
+                      {directiveMode === 'OVERDUE' && (
+                        <span className="bg-black text-white text-[9px] font-bold px-1.5 py-0 tracking-wider">
+                          MISSED / OPEN
                         </span>
                       )}
                     </div>
                     <p className="text-xs text-black/80 font-mono leading-relaxed">
                       {currentFocusTask.details || 'No additional instructions logged.'}
                     </p>
+                    {directiveMode === 'OVERDUE' && (
+                      <p className="text-[11px] text-black/60 font-mono italic">
+                        All scheduled routine hours for today have ended. This task was scheduled earlier at {currentFocusTask.time} and remains open.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -872,8 +939,10 @@ export function TrackerView({
                         ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
                             timerSeconds % 60
                           ).padStart(2, '0')}]`
-                        : !isDirectlyInSession
+                        : directiveMode === 'UPCOMING'
                         ? '[START EARLY]'
+                        : directiveMode === 'OVERDUE'
+                        ? '[START LATE]'
                         : '[START TIMER]'}
                     </button>
 
@@ -913,7 +982,11 @@ export function TrackerView({
                   <div className="border-t border-black/20 pt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="bg-black text-white text-[9px] font-black px-1.5 py-0.5 tracking-wider">
-                        {isDirectlyInSession ? 'NEXT:' : 'FOLLOWED BY:'}
+                        {directiveMode === 'OVERDUE'
+                          ? 'NEXT OVERDUE:'
+                          : isDirectlyInSession
+                          ? 'NEXT:'
+                          : 'FOLLOWED BY:'}
                       </span>
                       <span className="font-bold text-black text-xs sm:text-sm tracking-tight">
                         {nextUpcomingTask.title}

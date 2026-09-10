@@ -99,3 +99,39 @@ export function sortDayTaskLogsByStartTime(tasks: DayTaskLog[]): DayTaskLog[] {
     return timeA - timeB;
   });
 }
+
+/**
+ * Parses any time slot string into start and end minutes from midnight.
+ * Supports:
+ * - "07:00 – 08:10", "07:00-08:10", "07:00 to 08:10"
+ * - "7:00 AM – 8:10 AM", "1:30 PM - 2:45 PM", "11am to 12pm"
+ * - Single time string like "07:00" or "9:00 AM" (using defaultDurationMinutes)
+ */
+export function parseTimeSlotRange(
+  timeStr?: string,
+  defaultDurationMinutes: number = 60
+): { start: number; end: number } | null {
+  if (!timeStr) return null;
+  const str = timeStr.trim();
+  if (!str) return null;
+
+  // Split by range separators: en-dash, em-dash, hyphen, or 'to'
+  const parts = str.split(/\s*[-–—]\s*|\s+to\s+/i);
+  if (parts.length >= 2) {
+    const start = parseStartTimeMinutes(parts[0]);
+    const end = parseStartTimeMinutes(parts[1]);
+    if (start !== Number.MAX_SAFE_INTEGER && end !== Number.MAX_SAFE_INTEGER && end > start) {
+      return { start, end };
+    } else if (start !== Number.MAX_SAFE_INTEGER) {
+      return { start, end: Math.min(1439, start + defaultDurationMinutes) };
+    }
+  }
+
+  // Single time entry
+  const start = parseStartTimeMinutes(str);
+  if (start !== Number.MAX_SAFE_INTEGER) {
+    return { start, end: Math.min(1439, start + defaultDurationMinutes) };
+  }
+
+  return null;
+}
