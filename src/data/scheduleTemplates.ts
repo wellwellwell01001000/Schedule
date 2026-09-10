@@ -1,5 +1,5 @@
 import { DayKey, DaySchedule } from '../types';
-import { getInitialSchedules, getCleanSlateSchedules, createEmptyDaySchedule } from './historyStore';
+import { getCleanSlateSchedules, createEmptyDaySchedule } from './historyStore';
 
 export { createEmptyDaySchedule, getCleanSlateSchedules };
 
@@ -21,14 +21,6 @@ export const BUILT_IN_TEMPLATES: RoutineTemplate[] = [
     description: 'Completely blank Monday–Sunday schedule. Zero pre-scheduled tasks, ready for your custom routines and daily flow.',
     totalWeeklyTasks: 0,
     getSchedules: () => getCleanSlateSchedules(),
-  },
-  {
-    id: 'alternating_split',
-    name: 'Alternating Routine Split (Original Preset)',
-    badge: '48 TASKS',
-    description: 'The complete alternating routine split: Morning Deep Work ML, Alternating Evenings (Guitar / Leisure vs. Cybersecurity Lab), Workouts, and Weekend Deep Immersion.',
-    totalWeeklyTasks: 48,
-    getSchedules: () => getInitialSchedules(),
   },
 ];
 

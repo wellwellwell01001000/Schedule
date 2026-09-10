@@ -1,4 +1,5 @@
 import { DayKey, TaskCategory, TaskItem } from '../types';
+import { getDateForDayKey } from './ascii';
 
 export interface ParsedTaskDraft {
   id: string;
@@ -352,6 +353,6 @@ export function convertDraftsToTaskItems(drafts: ParsedTaskDraft[]): TaskItem[] 
       isRepetitive: d.isRepetitive,
       repeatDays: d.repeatDays,
       isCustom: true,
-      oneTimeDate: d.isRepetitive ? undefined : '2026-09-03',
+      oneTimeDate: d.isRepetitive ? undefined : getDateForDayKey(d.repeatDays[0] || 'mon'),
     }));
 }

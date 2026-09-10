@@ -70,6 +70,34 @@ export function getDayKeyFromDate(date: Date = new Date()): string {
 }
 
 /**
+ * Returns the current system date as 'YYYY-MM-DD'
+ */
+export function getTodayDateStr(date: Date = new Date()): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Computes the exact ISO YYYY-MM-DD date for any DayKey within the active week
+ */
+export function getDateForDayKey(dayKey: string, baseDate: Date = new Date()): string {
+  const dayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const targetIndex = dayKeys.indexOf(dayKey);
+  if (targetIndex === -1) return getTodayDateStr(baseDate);
+
+  const currentDayOfWeek = baseDate.getDay();
+  // Monday is index 0, Sunday is index 6
+  const currentIsoIndex = currentDayOfWeek === 0 ? 6 : currentDayOfWeek - 1;
+  const diffDays = targetIndex - currentIsoIndex;
+
+  const d = new Date(baseDate);
+  d.setDate(d.getDate() + diffDays);
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
  * Formats current system timestamp in monospace terminal format
  * e.g. "2026-09-03 07:58:12 UTC-7 [THU]"
  */

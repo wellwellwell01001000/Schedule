@@ -1,4 +1,4 @@
-import { TaskItem } from '../types';
+import { TaskItem, DayTaskLog } from '../types';
 
 /**
  * Extracts start time in minutes from midnight (0..1439).
@@ -85,6 +85,17 @@ export function sortTasksByStartTime(tasks: TaskItem[]): TaskItem[] {
   return [...tasks].sort((a, b) => {
     const timeA = parseStartTimeMinutes(a.time);
     const timeB = parseStartTimeMinutes(b.time);
+    return timeA - timeB;
+  });
+}
+
+/**
+ * Sorts an array of DayTaskLog objects strictly in ascending order by their start time.
+ */
+export function sortDayTaskLogsByStartTime(tasks: DayTaskLog[]): DayTaskLog[] {
+  return [...tasks].sort((a, b) => {
+    const timeA = parseStartTimeMinutes(a.timeSlot);
+    const timeB = parseStartTimeMinutes(b.timeSlot);
     return timeA - timeB;
   });
 }

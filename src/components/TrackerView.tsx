@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TaskItem, TaskCategory, DayKey, DaySchedule, AsciiBarStyle } from '../types';
-import { generateAsciiProgressBar, getDayKeyFromDate } from '../utils/ascii';
+import { generateAsciiProgressBar, getDayKeyFromDate, getDateForDayKey, getTodayDateStr } from '../utils/ascii';
 import { formatMinutes, syncDayActionToHistory } from '../data/historyStore';
 import { PomodoroTimer } from './PomodoroTimer';
 import {
@@ -91,7 +91,7 @@ export function TrackerView({
   const [newTimeSlot, setNewTimeSlot] = useState('19:00 – 20:00');
   const [newDuration, setNewDuration] = useState<number>(60);
   const [newDetails, setNewDetails] = useState('');
-  const [newIsRepetitive, setNewIsRepetitive] = useState(true);
+  const [newIsRepetitive, setNewIsRepetitive] = useState(false);
   const [newRepeatDays, setNewRepeatDays] = useState<DayKey[]>([selectedDay as DayKey]);
   const [newIsScheduled, setNewIsScheduled] = useState(true);
 
@@ -152,9 +152,9 @@ export function TrackerView({
       // ignore
     }
 
-    // Sync to 2026-09-03
-    const todayDateStr = '2026-09-03';
-    syncDayActionToHistory(todayDateStr, selectedDay as DayKey, currentSchedule.tasks, newIds);
+    // Sync to selected day's date
+    const dayDateStr = getDateForDayKey(selectedDay);
+    syncDayActionToHistory(dayDateStr, selectedDay as DayKey, currentSchedule.tasks, newIds);
     onRefreshHistory();
   };
 
@@ -214,7 +214,7 @@ export function TrackerView({
   const executeDeschedule = (task: TaskItem, scope: 'today' | 'all') => {
     const updatedSchedules = applyDeschedule(schedules, task, scope, selectedDay as DayKey);
     onUpdateSchedules(updatedSchedules);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
     onRefreshHistory();
     setActionModalOpen(false);
 
@@ -227,7 +227,7 @@ export function TrackerView({
   const executeSchedule = (task: TaskItem, scope: 'today' | 'all') => {
     const updatedSchedules = applySchedule(schedules, task, scope, selectedDay as DayKey);
     onUpdateSchedules(updatedSchedules);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
     onRefreshHistory();
     setActionModalOpen(false);
 
@@ -247,7 +247,7 @@ export function TrackerView({
     const updatedCompleted = completedTaskIds.filter((id) => id !== task.id);
     onUpdateSchedules(updatedSchedules);
     saveCompletion(updatedCompleted);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], updatedCompleted);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], updatedCompleted);
     onRefreshHistory();
     setActionModalOpen(false);
 
@@ -260,7 +260,7 @@ export function TrackerView({
   const handleDescheduleAllToday = () => {
     const updated = descheduleAllForDay(schedules, selectedDay as DayKey);
     onUpdateSchedules(updated);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
     onRefreshHistory();
     setToastMessage(`[ALL PARKED]: All active tasks for ${currentSchedule.dayName.toUpperCase()} moved to Parked.`);
     setTimeout(() => setToastMessage(null), 4500);
@@ -270,7 +270,7 @@ export function TrackerView({
   const handleRestoreAllToday = () => {
     const updated = restoreAllForDay(schedules, selectedDay as DayKey);
     onUpdateSchedules(updated);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
     onRefreshHistory();
     setToastMessage(`[ALL RESTORED]: All parked tasks for ${currentSchedule.dayName.toUpperCase()} restored to Active.`);
     setTimeout(() => setToastMessage(null), 4500);
@@ -300,7 +300,7 @@ export function TrackerView({
     };
 
     onUpdateSchedules(updatedSchedules);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updatedTasks, completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedTasks, completedTaskIds);
     onRefreshHistory();
   };
 
@@ -327,7 +327,7 @@ export function TrackerView({
 
     onUpdateSchedules(updatedSchedules);
     const dayTasks = updatedSchedules[selectedDay]?.tasks || [];
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, dayTasks, completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, dayTasks, completedTaskIds);
     onRefreshHistory();
 
     setToastMessage(`[TASK UPDATED]: "${updatedFields.title || editingTask.title}" updated.`);
@@ -378,7 +378,7 @@ export function TrackerView({
       isRepetitive: newIsRepetitive,
       repeatDays: newIsRepetitive ? newRepeatDays : [selectedDay as DayKey],
       isCustom: true,
-      oneTimeDate: newIsRepetitive ? undefined : '2026-09-03',
+      oneTimeDate: newIsRepetitive ? undefined : getDateForDayKey(selectedDay),
     };
 
     const targetDays = newIsRepetitive ? newRepeatDays : [selectedDay as DayKey];
@@ -394,7 +394,7 @@ export function TrackerView({
     }
 
     onUpdateSchedules(updatedSchedules);
-    syncDayActionToHistory('2026-09-03', selectedDay as DayKey, updatedSchedules[selectedDay].tasks, completedTaskIds);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay].tasks, completedTaskIds);
     onRefreshHistory();
 
     // Reset form

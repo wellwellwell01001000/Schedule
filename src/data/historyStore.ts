@@ -9,6 +9,134 @@ import {
   TaskTimeAuditItem,
 } from '../types';
 import { SCHEDULES } from './scheduleData';
+import { getTodayDateStr } from '../utils/ascii';
+import { sortDayTaskLogsByStartTime } from '../utils/taskSorting';
+
+// Helper to calculate exact week metadata for any date string (YYYY-MM-DD)
+export function getWeekInfoForDate(dateStr: string): {
+  weekId: string;
+  weekNumber: number;
+  label: string;
+  startDate: string;
+  endDate: string;
+} {
+  const parts = dateStr.split('-');
+  const year = parts[0] || '2026';
+  const month = parts[1] || '09';
+  const day = parseInt(parts[2] || '1', 10);
+  const y = parseInt(year, 10);
+  const m = parseInt(month, 10);
+  const lastDay = new Date(y, m, 0).getDate();
+
+  let weekNum = 1;
+  let startDay = 1;
+  let endDay = 7;
+
+  if (day >= 1 && day <= 7) {
+    weekNum = 1; startDay = 1; endDay = 7;
+  } else if (day >= 8 && day <= 14) {
+    weekNum = 2; startDay = 8; endDay = 14;
+  } else if (day >= 15 && day <= 21) {
+    weekNum = 3; startDay = 15; endDay = 21;
+  } else if (day >= 22 && day <= 28) {
+    weekNum = 4; startDay = 22; endDay = 28;
+  } else {
+    weekNum = 5; startDay = 29; endDay = lastDay;
+  }
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const monthKey = `${year}-${month}`;
+  return {
+    weekId: `${monthKey}-W${weekNum}`,
+    weekNumber: weekNum,
+    label: `Week ${weekNum} (${month}/${pad(startDay)} to ${month}/${pad(endDay)})`,
+    startDate: `${year}-${month}-${pad(startDay)}`,
+    endDate: `${year}-${month}-${pad(endDay)}`,
+  };
+}
+
+// Rebalances any stored history to guarantee strict chronological ordering:
+// - Days partitioned into mathematically correct weeks
+// - Days sorted chronologically (ascending date: Mon -> Tue -> Wed -> Thu...)
+// - Tasks within each day sorted chronologically by start time
+// - Weeks sorted chronologically (Week 1 -> Week 2 -> Week 3...)
+export function rebalanceAndSortHistory(history: MonthLogRecord[]): MonthLogRecord[] {
+  const result: MonthLogRecord[] = [];
+
+  for (const month of history) {
+    const allDaysMap = new Map<string, DayLogRecord>();
+    for (const week of month.weeks || []) {
+      for (const day of week.days || []) {
+        const sortedDayTasks = sortDayTaskLogsByStartTime(day.tasks || []);
+        const totalTime = sortedDayTasks.reduce((acc, t) => acc + t.timeSpentMinutes, 0);
+        const completedCount = sortedDayTasks.filter((t) => t.completed).length;
+
+        const cleanDay: DayLogRecord = {
+          ...day,
+          tasks: sortedDayTasks,
+          totalTimeMinutes: totalTime,
+          completedCount,
+          totalTasksCount: sortedDayTasks.length,
+        };
+
+        const existing = allDaysMap.get(day.date);
+        if (!existing || cleanDay.totalTimeMinutes >= existing.totalTimeMinutes) {
+          allDaysMap.set(day.date, cleanDay);
+        }
+      }
+    }
+
+    const uniqueDays = Array.from(allDaysMap.values());
+    uniqueDays.sort((a, b) => a.date.localeCompare(b.date));
+
+    const weeksMap = new Map<string, WeekLogRecord>();
+    for (const day of uniqueDays) {
+      const weekInfo = getWeekInfoForDate(day.date);
+      let week = weeksMap.get(weekInfo.weekId);
+      if (!week) {
+        week = {
+          weekId: weekInfo.weekId,
+          weekNumber: weekInfo.weekNumber,
+          label: weekInfo.label,
+          startDate: weekInfo.startDate,
+          endDate: weekInfo.endDate,
+          days: [],
+          totalTimeMinutes: 0,
+          completedCount: 0,
+          totalTasksCount: 0,
+        };
+        weeksMap.set(weekInfo.weekId, week);
+      }
+      week.days.push(day);
+    }
+
+    const cleanedWeeks: WeekLogRecord[] = [];
+    for (const week of weeksMap.values()) {
+      week.days.sort((a, b) => a.date.localeCompare(b.date));
+      week.totalTimeMinutes = week.days.reduce((acc, d) => acc + d.totalTimeMinutes, 0);
+      week.completedCount = week.days.reduce((acc, d) => acc + d.completedCount, 0);
+      week.totalTasksCount = week.days.reduce((acc, d) => acc + d.totalTasksCount, 0);
+      cleanedWeeks.push(week);
+    }
+
+    cleanedWeeks.sort((a, b) => a.weekNumber - b.weekNumber);
+
+    const totalTimeMinutes = cleanedWeeks.reduce((acc, w) => acc + w.totalTimeMinutes, 0);
+    const completedCount = cleanedWeeks.reduce((acc, w) => acc + w.completedCount, 0);
+    const totalTasksCount = cleanedWeeks.reduce((acc, w) => acc + w.totalTasksCount, 0);
+
+    result.push({
+      ...month,
+      weeks: cleanedWeeks,
+      totalTimeMinutes,
+      completedCount,
+      totalTasksCount,
+    });
+  }
+
+  result.sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+  return result;
+}
 
 const STORAGE_CUSTOM_SCHEDULES_KEY = 'prod_sys_custom_schedules_v1';
 const STORAGE_HIERARCHY_HISTORY_KEY = 'prod_sys_hierarchy_history_v1';
@@ -239,16 +367,17 @@ export function loadHierarchyHistory(): MonthLogRecord[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         // Sanitize: detect and purge synthetic seed months (June, July, August 2026, or synthetic full-month data)
+        const todayStr = getTodayDateStr();
         const hasLegacySeedMonths = parsed.some(
           (m: MonthLogRecord) =>
             m.monthName === 'June 2026' ||
             m.monthName === 'July 2026' ||
             m.monthName === 'August 2026' ||
-            (m.monthKey === '2026-09' && m.weeks?.some((w) => w.days?.some((d) => d.date > '2026-09-03')))
+            (m.monthKey === '2026-09' && m.weeks?.some((w) => w.days?.some((d) => d.date > todayStr)))
         );
 
+        let genuineMonths: MonthLogRecord[] = [];
         if (hasLegacySeedMonths) {
-          const genuineMonths: MonthLogRecord[] = [];
           for (const m of parsed) {
             if (m.monthName === 'June 2026' || m.monthName === 'July 2026' || m.monthName === 'August 2026') {
               continue; // Drop synthetic historical mock months completely
@@ -257,37 +386,28 @@ export function loadHierarchyHistory(): MonthLogRecord[] {
               const cleanedWeeks = m.weeks
                 .map((w) => ({
                   ...w,
-                  days: w.days.filter((d) => d.date <= '2026-09-03' && d.totalTimeMinutes > 0),
+                  days: w.days.filter((d) => d.date <= todayStr && d.totalTimeMinutes > 0),
                 }))
-                .filter((w) => w.days.length > 0)
-                .map((w) => {
-                  const totalTimeMinutes = w.days.reduce((acc, d) => acc + d.totalTimeMinutes, 0);
-                  const completedCount = w.days.reduce((acc, d) => acc + d.completedCount, 0);
-                  const totalTasksCount = w.days.reduce((acc, d) => acc + d.totalTasksCount, 0);
-                  return { ...w, totalTimeMinutes, completedCount, totalTasksCount };
-                });
+                .filter((w) => w.days.length > 0);
 
               if (cleanedWeeks.length > 0) {
-                const totalTimeMinutes = cleanedWeeks.reduce((acc, w) => acc + w.totalTimeMinutes, 0);
-                const completedCount = cleanedWeeks.reduce((acc, w) => acc + w.completedCount, 0);
-                const totalTasksCount = cleanedWeeks.reduce((acc, w) => acc + w.totalTasksCount, 0);
                 genuineMonths.push({
                   ...m,
                   weeks: cleanedWeeks,
-                  totalTimeMinutes,
-                  completedCount,
-                  totalTasksCount,
                 });
               }
             } else {
               genuineMonths.push(m);
             }
           }
-          saveHierarchyHistory(genuineMonths);
-          return genuineMonths;
+        } else {
+          genuineMonths = parsed;
         }
 
-        return parsed;
+        // Rebalance weeks and sort chronologically (days ascending, tasks by start time ascending)
+        const rebalanced = rebalanceAndSortHistory(genuineMonths);
+        saveHierarchyHistory(rebalanced);
+        return rebalanced;
       }
     }
   } catch {
@@ -382,19 +502,6 @@ export function syncDayActionToHistory(
     history.push(monthRecord);
   }
 
-  // Find or insert day
-  let foundDay: DayLogRecord | null = null;
-  let containingWeek: WeekLogRecord | null = null;
-
-  for (const week of monthRecord.weeks) {
-    const d = week.days.find((day) => day.date === dateStr);
-    if (d) {
-      foundDay = d;
-      containingWeek = week;
-      break;
-    }
-  }
-
   const convertedTasks: DayTaskLog[] = tasks.map((t) => {
     const isDone = completedIds.includes(t.id);
     const timeSpent = (t.timeSpentMinutes !== undefined && t.timeSpentMinutes > 0)
@@ -416,77 +523,64 @@ export function syncDayActionToHistory(
     };
   });
 
-  // If foundDay already had tasks logged from earlier today that are no longer in `tasks`,
-  // preserve only those that had actual work logged (timeSpentMinutes > 0 or completed).
-  // If a removed task had 0% / 0 mins worked, it is completely discarded.
-  if (foundDay) {
-    const currentTaskIds = new Set(tasks.map((t) => t.id));
-    const currentTaskTitles = new Set(tasks.map((t) => t.title.trim().toLowerCase()));
+  // Sort tasks chronologically by start time
+  const sortedConvertedTasks = sortDayTaskLogsByStartTime(convertedTasks);
+  const totalTime = sortedConvertedTasks.reduce((acc, t) => acc + t.timeSpentMinutes, 0);
+  const completedCount = sortedConvertedTasks.filter((t) => t.completed).length;
 
-    const preservedPreviousTasks: DayTaskLog[] = foundDay.tasks.filter((prev) => {
-      const stillExists = currentTaskIds.has(prev.taskId) || currentTaskTitles.has(prev.title.trim().toLowerCase());
-      if (stillExists) return false; // Handled by convertedTasks
-      // Only keep if user actually worked on it
-      return (prev.timeSpentMinutes && prev.timeSpentMinutes > 0) || prev.completed;
-    });
-
-    const finalDayTasks = [...convertedTasks, ...preservedPreviousTasks];
-    const totalTime = finalDayTasks.reduce((acc, t) => acc + t.timeSpentMinutes, 0);
-    const completedCount = finalDayTasks.filter((t) => t.completed).length;
-
-    foundDay.tasks = finalDayTasks;
-    foundDay.totalTimeMinutes = totalTime;
-    foundDay.completedCount = completedCount;
-    foundDay.totalTasksCount = finalDayTasks.length;
-  } else {
-    const totalTime = convertedTasks.reduce((acc, t) => acc + t.timeSpentMinutes, 0);
-    const completedCount = convertedTasks.filter((t) => t.completed).length;
-
-    // If not found, add to the current active week
-    const newDay: DayLogRecord = {
-      date: dateStr,
-      dayKey,
-      dayName: SCHEDULES[dayKey]?.dayName || 'Thursday',
-      code: SCHEDULES[dayKey]?.code,
-      tasks: convertedTasks,
-      totalTimeMinutes: totalTime,
-      completedCount,
-      totalTasksCount: convertedTasks.length,
+  // Determine correct week container based on exact calendar date
+  const weekInfo = getWeekInfoForDate(dateStr);
+  let targetWeek = monthRecord.weeks.find((w) => w.weekId === weekInfo.weekId);
+  if (!targetWeek) {
+    targetWeek = {
+      weekId: weekInfo.weekId,
+      weekNumber: weekInfo.weekNumber,
+      label: weekInfo.label,
+      startDate: weekInfo.startDate,
+      endDate: weekInfo.endDate,
+      days: [],
+      totalTimeMinutes: 0,
+      completedCount: 0,
+      totalTasksCount: 0,
     };
+    monthRecord.weeks.push(targetWeek);
+  }
 
-    if (monthRecord.weeks.length > 0) {
-      const lastWeek = monthRecord.weeks[monthRecord.weeks.length - 1];
-      lastWeek.days.push(newDay);
-      containingWeek = lastWeek;
-    } else {
-      const newWeek: WeekLogRecord = {
-        weekId: `${monthKey}-W1`,
-        weekNumber: 1,
-        label: `Week 1 (${monthStr}/01 to ${monthStr}/07)`,
-        startDate: dateStr,
-        endDate: dateStr,
-        days: [newDay],
-        totalTimeMinutes: totalTime,
-        completedCount,
-        totalTasksCount: convertedTasks.length,
-      };
-      monthRecord.weeks.push(newWeek);
-      containingWeek = newWeek;
+  // Purge this date from any other week if it was erroneously recorded there previously
+  for (const w of monthRecord.weeks) {
+    if (w.weekId !== targetWeek.weekId) {
+      w.days = w.days.filter((d) => d.date !== dateStr);
     }
   }
 
-  // Recalculate weeks and month totals
-  for (const week of monthRecord.weeks) {
-    week.totalTimeMinutes = week.days.reduce((acc, d) => acc + d.totalTimeMinutes, 0);
-    week.completedCount = week.days.reduce((acc, d) => acc + d.completedCount, 0);
-    week.totalTasksCount = week.days.reduce((acc, d) => acc + d.totalTasksCount, 0);
+  let foundDay = targetWeek.days.find((d) => d.date === dateStr);
+  if (foundDay) {
+    foundDay.dayKey = dayKey;
+    if (SCHEDULES[dayKey]) {
+      foundDay.dayName = SCHEDULES[dayKey].dayName;
+      foundDay.code = SCHEDULES[dayKey].code;
+    }
+    foundDay.tasks = sortedConvertedTasks;
+    foundDay.totalTimeMinutes = totalTime;
+    foundDay.completedCount = completedCount;
+    foundDay.totalTasksCount = sortedConvertedTasks.length;
+  } else {
+    const newDay: DayLogRecord = {
+      date: dateStr,
+      dayKey,
+      dayName: SCHEDULES[dayKey]?.dayName || dayKey.toUpperCase(),
+      code: SCHEDULES[dayKey]?.code,
+      tasks: sortedConvertedTasks,
+      totalTimeMinutes: totalTime,
+      completedCount,
+      totalTasksCount: sortedConvertedTasks.length,
+    };
+    targetWeek.days.push(newDay);
   }
 
-  monthRecord.totalTimeMinutes = monthRecord.weeks.reduce((acc, w) => acc + w.totalTimeMinutes, 0);
-  monthRecord.completedCount = monthRecord.weeks.reduce((acc, w) => acc + w.completedCount, 0);
-  monthRecord.totalTasksCount = monthRecord.weeks.reduce((acc, w) => acc + w.totalTasksCount, 0);
-
-  saveHierarchyHistory(history);
+  // Re-sort and recalculate everything
+  const rebalanced = rebalanceAndSortHistory(history);
+  saveHierarchyHistory(rebalanced);
 }
 
 // Compute per-task time calculation audit across all history and all custom schedules

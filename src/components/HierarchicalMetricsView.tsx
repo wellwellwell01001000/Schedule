@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { MonthLogRecord, WeekLogRecord, DayLogRecord, DayTaskLog } from '../types';
 import { formatMinutes } from '../data/historyStore';
-import { generateAsciiProgressBar } from '../utils/ascii';
+import { generateAsciiProgressBar, getTodayDateStr } from '../utils/ascii';
+import { sortDayTaskLogsByStartTime } from '../utils/taskSorting';
 
 interface HierarchicalMetricsViewProps {
   history: MonthLogRecord[];
@@ -19,6 +20,7 @@ export function HierarchicalMetricsView({ history }: HierarchicalMetricsViewProp
 
   // Quick filter / view mode: 'drilldown' or 'expanded'
   const [viewMode, setViewMode] = useState<'drilldown' | 'tree'>('drilldown');
+  const [dayTaskFilter, setDayTaskFilter] = useState<'all' | 'completed' | 'pending'>('all');
 
   // Overall calculations across all months
   const allMonthsTotals = useMemo(() => {
@@ -94,6 +96,11 @@ export function HierarchicalMetricsView({ history }: HierarchicalMetricsViewProp
     if (!activeWeek || !selectedDayDate) return null;
     return activeWeek.days.find((d) => d.date === selectedDayDate) || null;
   }, [activeWeek, selectedDayDate]);
+
+  const sortedActiveWeekDays = useMemo(() => {
+    if (!activeWeek) return [];
+    return [...activeWeek.days].sort((a, b) => a.date.localeCompare(b.date));
+  }, [activeWeek]);
 
   if (history.length === 0) {
     return (
@@ -372,7 +379,7 @@ export function HierarchicalMetricsView({ history }: HierarchicalMetricsViewProp
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {m.weeks.map((week) => {
+                      {[...m.weeks].sort((a, b) => a.weekNumber - b.weekNumber).map((week) => {
                         const isWeekSelected = selectedWeekId === week.weekId;
                         const weekHours = (week.totalTimeMinutes / 60).toFixed(1);
                         const weekRate = week.totalTasksCount > 0
@@ -437,7 +444,7 @@ export function HierarchicalMetricsView({ history }: HierarchicalMetricsViewProp
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {activeWeek.days.map((day) => {
+              {sortedActiveWeekDays.map((day) => {
                 const isDaySelected = selectedDayDate === day.date;
                 const dayHours = (day.totalTimeMinutes / 60).toFixed(1);
 
@@ -482,84 +489,144 @@ export function HierarchicalMetricsView({ history }: HierarchicalMetricsViewProp
       )}
 
       {/* SUB-PART 3: TASKS LISTED ON SELECTED DAY */}
-      {activeDay && (
-        <div className="border-2 border-white bg-black">
-          <div className="bg-white text-black text-sm px-4 py-1.5 font-bold flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>_TASKS_LOGGED_ON_{activeDay.date} // {activeDay.dayName.toUpperCase()}</span>
-              <span className="text-xs font-normal">[{activeDay.code || 'DAY'}]</span>
-            </div>
-            <div className="text-xs font-mono font-bold">
-              TOTAL GIVEN: {formatMinutes(activeDay.totalTimeMinutes)} ({activeDay.completedCount}/{activeDay.totalTasksCount} DONE)
-            </div>
-          </div>
+      {activeDay && (() => {
+        const todayStr = getTodayDateStr();
+        const isToday = activeDay.date === todayStr;
+        const pendingCount = activeDay.tasks.filter((t) => !t.completed).length;
 
-          <div className="p-4 md:p-6 space-y-4">
-            <div className="text-xs opacity-80 border-b border-white/20 pb-3 flex flex-wrap items-center justify-between gap-2">
-              <span>
-                HERE ARE ALL TASKS SCHEDULED OR ADDED ON THIS DAY WITH EXACT TIME GIVEN:
-              </span>
-              <span className="text-white font-bold">
-                {activeDay.tasks.length} TASK ENTRIES RECORDED
-              </span>
+        const sortedDayTasks = sortDayTaskLogsByStartTime(activeDay.tasks);
+        const visibleTasks = sortedDayTasks.filter((t) => {
+          if (dayTaskFilter === 'completed') return t.completed;
+          if (dayTaskFilter === 'pending') return !t.completed;
+          return true;
+        });
+
+        return (
+          <div className="border-2 border-white bg-black">
+            <div className="bg-white text-black text-sm px-4 py-1.5 font-bold flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span>_TASKS_LOGGED_ON_{activeDay.date} // {activeDay.dayName.toUpperCase()}</span>
+                <span className="text-xs font-normal">[{activeDay.code || 'DAY'}]</span>
+                {isToday && (
+                  <span className="text-[10px] bg-black text-white px-1.5 py-0.5 border border-black font-mono">
+                    [TODAY / ACTIVE]
+                  </span>
+                )}
+              </div>
+              <div className="text-xs font-mono font-bold">
+                TOTAL GIVEN: {formatMinutes(activeDay.totalTimeMinutes)} ({activeDay.completedCount}/{activeDay.totalTasksCount} DONE{pendingCount > 0 ? `, ${pendingCount} ${isToday ? 'PENDING' : 'UNCOMPLETED'}` : ''})
+              </div>
             </div>
 
-            <div className="divide-y divide-white/20 border border-white/30">
-              {activeDay.tasks.map((task, idx) => (
-                <div
-                  key={task.taskId + '-' + idx}
-                  className="p-3 md:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-black hover:bg-white/5"
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`text-xs font-bold px-2 py-0.5 border shrink-0 ${
-                        task.completed
+            <div className="p-4 md:p-6 space-y-4">
+              <div className="text-xs opacity-80 border-b border-white/20 pb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <span>
+                    TASK LOG FOR {activeDay.date} ({isToday ? 'ACTIVE DAY' : 'HISTORICAL DAY'}):
+                  </span>
+                  <div className="flex items-center gap-1 text-[11px] font-mono">
+                    <button
+                      onClick={() => setDayTaskFilter('all')}
+                      className={`px-2 py-0.5 border text-xs font-bold transition-colors ${
+                        dayTaskFilter === 'all'
                           ? 'bg-white text-black border-white'
-                          : 'border-white/40 text-white/60'
+                          : 'border-white/40 text-white/70 hover:border-white'
                       }`}
                     >
-                      {task.completed ? '[DONE]' : '[PENDING]'}
-                    </span>
-
-                    <div className="space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-bold text-white tracking-tight">
-                          {task.title}
-                        </span>
-                        {task.timeSlot && (
-                          <span className="text-xs opacity-60 font-mono">
-                            [{task.timeSlot}]
-                          </span>
-                        )}
-                        <span className="text-[10px] uppercase border border-white/30 px-1 py-0 opacity-75">
-                          {task.category}
-                        </span>
-                        <span className="text-[10px] uppercase opacity-50">
-                          {task.isRepetitive ? '[REPETITIVE]' : '[ONE-TIME]'}
-                        </span>
-                      </div>
-                      {task.details && (
-                        <p className="text-xs opacity-65 leading-relaxed">
-                          {task.details}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                    <div className="text-right">
-                      <div className="text-[10px] opacity-60 uppercase">TIME GIVEN</div>
-                      <div className="text-sm font-bold text-white font-mono">
-                        {formatMinutes(task.timeSpentMinutes)}
-                      </div>
-                    </div>
+                      ALL ({activeDay.tasks.length})
+                    </button>
+                    <button
+                      onClick={() => setDayTaskFilter('completed')}
+                      className={`px-2 py-0.5 border text-xs font-bold transition-colors ${
+                        dayTaskFilter === 'completed'
+                          ? 'bg-white text-black border-white'
+                          : 'border-white/40 text-white/70 hover:border-white'
+                      }`}
+                    >
+                      DONE ({activeDay.completedCount})
+                    </button>
+                    <button
+                      onClick={() => setDayTaskFilter('pending')}
+                      className={`px-2 py-0.5 border text-xs font-bold transition-colors ${
+                        dayTaskFilter === 'pending'
+                          ? 'bg-white text-black border-white'
+                          : 'border-white/40 text-white/70 hover:border-white'
+                      }`}
+                    >
+                      {isToday ? 'PENDING' : 'UNCOMPLETED'} ({pendingCount})
+                    </button>
                   </div>
                 </div>
-              ))}
+                <span className="text-[11px] opacity-70 font-mono">
+                  [STATUS IS STRICTLY SCOPED TO THIS DAY]
+                </span>
+              </div>
+
+              {visibleTasks.length === 0 ? (
+                <div className="p-8 text-center border border-white/20 text-white/50 text-xs font-mono">
+                  NO TASKS MATCHING FILTER [{dayTaskFilter.toUpperCase()}] FOR THIS DAY.
+                </div>
+              ) : (
+                <div className="divide-y divide-white/20 border border-white/30">
+                  {visibleTasks.map((task, idx) => (
+                    <div
+                      key={task.taskId + '-' + idx}
+                      className="p-3 md:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-black hover:bg-white/5"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`text-xs font-bold px-2 py-0.5 border shrink-0 ${
+                            task.completed
+                              ? 'bg-white text-black border-white'
+                              : isToday
+                              ? 'border-white/70 text-white bg-white/10'
+                              : 'border-white/40 text-white/50'
+                          }`}
+                        >
+                          {task.completed ? '[DONE]' : isToday ? '[PENDING]' : '[UNCOMPLETED]'}
+                        </span>
+
+                        <div className="space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-bold text-white tracking-tight">
+                              {task.title}
+                            </span>
+                            {task.timeSlot && (
+                              <span className="text-xs opacity-60 font-mono">
+                                [{task.timeSlot}]
+                              </span>
+                            )}
+                            <span className="text-[10px] uppercase border border-white/30 px-1 py-0 opacity-75">
+                              {task.category}
+                            </span>
+                            <span className="text-[10px] uppercase opacity-50">
+                              {task.isRepetitive ? '[REPETITIVE]' : '[ONE-TIME]'}
+                            </span>
+                          </div>
+                          {task.details && (
+                            <p className="text-xs opacity-65 leading-relaxed">
+                              {task.details}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
+                        <div className="text-right">
+                          <div className="text-[10px] opacity-60 uppercase">TIME GIVEN</div>
+                          <div className="text-sm font-bold text-white font-mono">
+                            {formatMinutes(task.timeSpentMinutes)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
