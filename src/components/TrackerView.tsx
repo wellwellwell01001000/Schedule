@@ -27,6 +27,7 @@ interface TrackerViewProps {
   onUpdateSchedules: (newSchedules: Record<string, DaySchedule>) => void;
   onRefreshHistory: () => void;
   onOpenTemplates?: () => void;
+  onOpenBulkIngest?: () => void;
 }
 
 // Helper to parse time slot like "07:00 – 08:10" into start and end minutes from midnight
@@ -61,6 +62,7 @@ export function TrackerView({
   onUpdateSchedules,
   onRefreshHistory,
   onOpenTemplates,
+  onOpenBulkIngest,
 }: TrackerViewProps) {
   const currentSchedule = schedules[selectedDay] || schedules['mon'];
   const todayKey = getDayKeyFromDate();
@@ -547,15 +549,6 @@ export function TrackerView({
           </div>
 
           <div className="flex items-center gap-2">
-            {onOpenTemplates && (
-              <button
-                onClick={onOpenTemplates}
-                className="border border-white/70 bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black hover:border-white transition-none cursor-pointer font-bold uppercase"
-                title="Switch between Clean Slate (0 tasks) or Alternating Split template"
-              >
-                [TEMPLATES]
-              </button>
-            )}
             <button
               onClick={() => setSelectedDay(todayKey)}
               className="border border-white/60 bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black hover:border-white transition-none cursor-pointer font-bold uppercase"

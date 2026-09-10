@@ -11,6 +11,7 @@ interface HeaderProps {
   onOpenTemplates?: () => void;
   onOpenBackup?: () => void;
   onOpenTutorial?: () => void;
+  onOpenBulkIngest?: () => void;
   onQuickDriveSync?: () => void;
   isSyncing?: boolean;
   syncCode?: string;
@@ -24,6 +25,7 @@ export function Header({
   onOpenTemplates,
   onOpenBackup,
   onOpenTutorial,
+  onOpenBulkIngest,
   onQuickDriveSync,
   isSyncing,
   syncCode,
@@ -132,6 +134,17 @@ export function Header({
         </nav>
 
         <div className="flex items-center gap-2">
+          {onOpenBulkIngest && (
+            <button
+              onClick={onOpenBulkIngest}
+              className="border-2 border-white bg-white text-black px-3 py-1 text-xs hover:bg-white/90 transition-none cursor-pointer uppercase font-black flex items-center gap-1.5 shadow-sm"
+              title="Bulk Multi-Line Task Ingest with 24H time blocks and recurrence tags"
+            >
+              <span className="inline-block w-1.5 h-1.5 bg-black" />
+              <span>[+ BULK INGEST]</span>
+            </button>
+          )}
+
           {onOpenTemplates && (
             <button
               onClick={onOpenTemplates}

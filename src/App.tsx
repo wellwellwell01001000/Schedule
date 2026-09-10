@@ -7,6 +7,7 @@ import { BackupManagerModal } from './components/BackupManagerModal';
 import { SystemWalkthroughModal } from './components/SystemWalkthroughModal';
 import { RoutineTemplatesModal } from './components/RoutineTemplatesModal';
 import { SyncChoiceModal } from './components/SyncChoiceModal';
+import { BulkIngestModal } from './components/BulkIngestModal';
 import { RoutineTemplate } from './data/scheduleTemplates';
 import { getDayKeyFromDate } from './utils/ascii';
 import {
@@ -41,6 +42,7 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState<string>(() => getDayKeyFromDate());
   const [isBackupOpen, setIsBackupOpen] = useState<boolean>(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState<boolean>(false);
+  const [isBulkIngestOpen, setIsBulkIngestOpen] = useState<boolean>(false);
   const [isSyncChoiceOpen, setIsSyncChoiceOpen] = useState<boolean>(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(() => {
     try {
@@ -227,6 +229,7 @@ export default function App() {
           onOpenTemplates={() => setIsTemplatesOpen(true)}
           onOpenBackup={() => setIsBackupOpen(true)}
           onOpenTutorial={() => setIsTutorialOpen(true)}
+          onOpenBulkIngest={() => setIsBulkIngestOpen(true)}
           onQuickDriveSync={() => setIsSyncChoiceOpen(true)}
           isSyncing={isQuickSyncing}
           syncCode={syncCode}
@@ -258,6 +261,7 @@ export default function App() {
               onUpdateSchedules={handleUpdateSchedules}
               onRefreshHistory={handleRefreshHistory}
               onOpenTemplates={() => setIsTemplatesOpen(true)}
+              onOpenBulkIngest={() => setIsBulkIngestOpen(true)}
             />
           )}
 
@@ -275,6 +279,16 @@ export default function App() {
             />
           )}
         </main>
+
+        {/* Bulk Ingest Modal */}
+        <BulkIngestModal
+          isOpen={isBulkIngestOpen}
+          onClose={() => setIsBulkIngestOpen(false)}
+          selectedDay={selectedDay}
+          schedules={schedules}
+          onUpdateSchedules={handleUpdateSchedules}
+          onRefreshHistory={handleRefreshHistory}
+        />
 
         {/* Routine Templates & Slate Manager Modal */}
         <RoutineTemplatesModal
