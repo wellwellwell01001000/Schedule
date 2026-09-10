@@ -238,6 +238,55 @@ export function loadHierarchyHistory(): MonthLogRecord[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
+        // Sanitize: detect and purge synthetic seed months (June, July, August 2026, or synthetic full-month data)
+        const hasLegacySeedMonths = parsed.some(
+          (m: MonthLogRecord) =>
+            m.monthName === 'June 2026' ||
+            m.monthName === 'July 2026' ||
+            m.monthName === 'August 2026' ||
+            (m.monthKey === '2026-09' && m.weeks?.some((w) => w.days?.some((d) => d.date > '2026-09-03')))
+        );
+
+        if (hasLegacySeedMonths) {
+          const genuineMonths: MonthLogRecord[] = [];
+          for (const m of parsed) {
+            if (m.monthName === 'June 2026' || m.monthName === 'July 2026' || m.monthName === 'August 2026') {
+              continue; // Drop synthetic historical mock months completely
+            }
+            if (m.monthKey === '2026-09') {
+              const cleanedWeeks = m.weeks
+                .map((w) => ({
+                  ...w,
+                  days: w.days.filter((d) => d.date <= '2026-09-03' && d.totalTimeMinutes > 0),
+                }))
+                .filter((w) => w.days.length > 0)
+                .map((w) => {
+                  const totalTimeMinutes = w.days.reduce((acc, d) => acc + d.totalTimeMinutes, 0);
+                  const completedCount = w.days.reduce((acc, d) => acc + d.completedCount, 0);
+                  const totalTasksCount = w.days.reduce((acc, d) => acc + d.totalTasksCount, 0);
+                  return { ...w, totalTimeMinutes, completedCount, totalTasksCount };
+                });
+
+              if (cleanedWeeks.length > 0) {
+                const totalTimeMinutes = cleanedWeeks.reduce((acc, w) => acc + w.totalTimeMinutes, 0);
+                const completedCount = cleanedWeeks.reduce((acc, w) => acc + w.completedCount, 0);
+                const totalTasksCount = cleanedWeeks.reduce((acc, w) => acc + w.totalTasksCount, 0);
+                genuineMonths.push({
+                  ...m,
+                  weeks: cleanedWeeks,
+                  totalTimeMinutes,
+                  completedCount,
+                  totalTasksCount,
+                });
+              }
+            } else {
+              genuineMonths.push(m);
+            }
+          }
+          saveHierarchyHistory(genuineMonths);
+          return genuineMonths;
+        }
+
         return parsed;
       }
     }

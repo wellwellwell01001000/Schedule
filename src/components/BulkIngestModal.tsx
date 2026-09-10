@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { DayKey, DaySchedule, TaskCategory } from '../types';
 import { parseBulkText, ParsedTaskDraft, convertDraftsToTaskItems } from '../utils/bulkIngestParser';
 import { sortTasksByStartTime } from '../utils/taskSorting';
-import { syncDayActionToHistory } from '../data/historyStore';
 import { setLocalLastModified } from '../services/driveVaultService';
 
 interface BulkIngestModalProps {
@@ -117,19 +116,6 @@ export function BulkIngestModal({
 
     onUpdateSchedules(updatedSchedules);
     setLocalLastModified();
-
-    // Sync all modified days to history
-    ALL_DAYS.forEach(({ id }) => {
-      const dayTasks = updatedSchedules[id]?.tasks || [];
-      try {
-        const saved = localStorage.getItem(`alt_routine_completed_${id}`);
-        const completedIds = saved ? JSON.parse(saved) : [];
-        syncDayActionToHistory('2026-09-03', id, dayTasks, completedIds);
-      } catch {
-        // ignore
-      }
-    });
-
     onRefreshHistory();
     onClose();
   };
