@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#000000"/>
+  <rect x="32" y="32" width="448" height="448" fill="none" stroke="#FFFFFF" stroke-width="16"/>
+  <rect x="72" y="72" width="368" height="48" fill="#FFFFFF"/>
+  <text x="88" y="104" fill="#000000" font-family="monospace" font-size="28" font-weight="900" letter-spacing="4">_ROUTINE_ENGINE</text>
+  <line x1="72" y1="180" x2="440" y2="180" stroke="#FFFFFF" stroke-width="8"/>
+  <line x1="72" y1="260" x2="440" y2="260" stroke="#FFFFFF" stroke-width="8"/>
+  <line x1="72" y1="340" x2="440" y2="340" stroke="#FFFFFF" stroke-width="8"/>
+  <text x="72" y="420" fill="#FFFFFF" font-family="monospace" font-size="24" font-weight="bold">[A/B_SYNC_ACTIVE]</text>
+</svg>

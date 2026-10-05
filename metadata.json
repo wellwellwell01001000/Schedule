@@ -1,0 +1,8 @@
+{
+  "name": "Remix Alternating Routine Tracker",
+  "description": "An editorial monochrome routine tracking engine with clean slate flexible schedules, timeline tracking, and hierarchical Month > Week > Day > Task metrics with per-task time distribution audits.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

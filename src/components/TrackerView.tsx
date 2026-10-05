@@ -1,0 +1,1829 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { TaskItem, TaskCategory, DayKey, DaySchedule, AsciiBarStyle } from '../types';
+import { generateAsciiProgressBar, getDayKeyFromDate, getDateForDayKey, getTodayDateStr } from '../utils/ascii';
+import {
+  formatMinutes,
+  syncDayActionToHistory,
+  getCompletedTaskIdsForDate,
+  saveCompletedTaskIdsForDate,
+  migrateLegacyCompletedKeys,
+  getDateTrackedTimeMap,
+  addTimeToDateTask,
+  cleanZeroHourTasksFromHistory,
+} from '../data/historyStore';
+import { PomodoroTimer } from './PomodoroTimer';
+import {
+  findRoutineMatches,
+  applyDeschedule,
+  applySchedule,
+  applyDelete,
+  descheduleAllForDay,
+  restoreAllForDay,
+  removeAllTasksFromAllDays,
+  applyTaskEdit,
+  TaskDayMatch,
+} from '../utils/taskRecurrence';
+import { sortTasksByStartTime, parseTimeSlotRange } from '../utils/taskSorting';
+import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
+import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
+import { EditTaskModal } from './EditTaskModal';
+import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
+import { setLocalLastModified } from '../services/driveVaultService';
+
+interface TrackerViewProps {
+  selectedDay: string;
+  setSelectedDay: (day: string) => void;
+  schedules: Record<string, DaySchedule>;
+  onUpdateSchedules: (newSchedules: Record<string, DaySchedule>) => void;
+  onRefreshHistory: () => void;
+  onOpenTemplates?: () => void;
+  onOpenBulkIngest?: () => void;
+}
+
+
+export function TrackerView({
+  selectedDay,
+  setSelectedDay,
+  schedules,
+  onUpdateSchedules,
+  onRefreshHistory,
+  onOpenTemplates,
+  onOpenBulkIngest,
+}: TrackerViewProps) {
+  const currentSchedule = schedules[selectedDay] || schedules['mon'];
+  const todayKey = getDayKeyFromDate();
+
+  // Live ticking clock to keep directive and dates in sync with real-world time (every 10s)
+  const [currentClock, setCurrentClock] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentClock(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Compute base date for the active week cycle
+  const baseDate = useMemo(() => {
+    return new Date(currentClock);
+  }, [currentClock]);
+
+  // Exact ISO date (YYYY-MM-DD) for the currently selected routine day
+  const selectedDateStr = useMemo(() => {
+    return getDateForDayKey(selectedDay, baseDate);
+  }, [selectedDay, baseDate]);
+
+  const weekStartStr = useMemo(() => getDateForDayKey('mon', baseDate), [baseDate]);
+  const weekEndStr = useMemo(() => getDateForDayKey('sun', baseDate), [baseDate]);
+
+  // True only when viewing today's active day
+  const isToday = selectedDay === todayKey;
+
+  // Date-scoped completion list: loads from date key or history, starts 100% clean [] on new weeks
+  const [completedTaskIds, setCompletedTaskIds] = useState<string[]>(() => {
+    migrateLegacyCompletedKeys();
+    const initDateStr = getDateForDayKey(selectedDay, new Date());
+    return getCompletedTaskIdsForDate(initDateStr);
+  });
+
+  // Date-scoped tracked time map: loads from date key or history, starts 100% clean (0m) on new weeks
+  const [dateTrackedTimeMap, setDateTrackedTimeMap] = useState<Record<string, number>>(() => {
+    const initDateStr = getDateForDayKey(selectedDay, new Date());
+    return getDateTrackedTimeMap(initDateStr);
+  });
+
+  // Reload completed tasks and tracked time whenever selected day or calendar date changes
+  useEffect(() => {
+    setCompletedTaskIds(getCompletedTaskIdsForDate(selectedDateStr));
+    setDateTrackedTimeMap(getDateTrackedTimeMap(selectedDateStr));
+  }, [selectedDateStr]);
+
+  const [asciiStyle, setAsciiStyle] = useState<AsciiBarStyle>('blocks');
+  const [barWidth, setBarWidth] = useState<number>(22);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  // Modal / Form state for Add Task
+  const [isAddingTask, setIsAddingTask] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newCategory, setNewCategory] = useState<TaskCategory>('custom');
+  const [newTimeSlot, setNewTimeSlot] = useState('19:00 – 20:00');
+  const [newDuration, setNewDuration] = useState<number>(60);
+  const [newDetails, setNewDetails] = useState('');
+  const [newIsRepetitive, setNewIsRepetitive] = useState(false);
+  const [newRepeatDays, setNewRepeatDays] = useState<DayKey[]>([selectedDay as DayKey]);
+  const [newIsScheduled, setNewIsScheduled] = useState(true);
+
+  // Recurring Task Action Modal state (Deschedule / Delete choices)
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionModalTask, setActionModalTask] = useState<TaskItem | null>(null);
+  const [actionModalMode, setActionModalMode] = useState<TaskActionMode>('deschedule');
+  const [actionModalMatches, setActionModalMatches] = useState<TaskDayMatch[]>([]);
+
+  // Recurring Routines Manager Modal state & toast banner
+  const [isManagerOpen, setIsManagerOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Remove All Tasks Confirmation Modal state
+  const [isConfirmRemoveAllOpen, setIsConfirmRemoveAllOpen] = useState(false);
+
+  // Cycle Actions dropdown menu state
+  const [isCycleActionsOpen, setIsCycleActionsOpen] = useState(false);
+  const cycleActionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (cycleActionsRef.current && !cycleActionsRef.current.contains(e.target as Node)) {
+        setIsCycleActionsOpen(false);
+      }
+    };
+    if (isCycleActionsOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isCycleActionsOpen]);
+
+  // Edit Task Modal state
+  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Live Timer states: which task is currently running a live stopwatch
+  const [activeTimerTaskId, setActiveTimerTaskId] = useState<string | null>(null);
+  const [timerSeconds, setTimerSeconds] = useState<number>(0);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stopwatch interval handler
+  useEffect(() => {
+    if (activeTimerTaskId) {
+      timerIntervalRef.current = setInterval(() => {
+        setTimerSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    }
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, [activeTimerTaskId]);
+
+  // Save completed tasks with strict date-scoping and auto-sync with history
+  const saveCompletion = (newIds: string[]) => {
+    setCompletedTaskIds(newIds);
+    saveCompletedTaskIdsForDate(selectedDateStr, newIds);
+    setLocalLastModified();
+
+    // Map tasks with date-scoped time spent for syncing to history
+    const tasksWithDateTrackedTime = currentSchedule.tasks.map((t) => ({
+      ...t,
+      timeSpentMinutes: dateTrackedTimeMap[t.id] || 0,
+    }));
+
+    // Sync to selected day's exact calendar date (ensuring past weeks remain preserved)
+    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, tasksWithDateTrackedTime, newIds);
+    onRefreshHistory();
+  };
+
+  const toggleTaskCompletion = (taskId: string) => {
+    let updated: string[];
+    if (completedTaskIds.includes(taskId)) {
+      updated = completedTaskIds.filter((id) => id !== taskId);
+    } else {
+      updated = [...completedTaskIds, taskId];
+    }
+    saveCompletion(updated);
+  };
+
+  // Trigger Deschedule Request (shows prompt if recurring across days)
+  const handleRequestDeschedule = (task: TaskItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const matches = findRoutineMatches(task, schedules);
+    if (matches.length > 1 || task.isRepetitive) {
+      setActionModalTask(task);
+      setActionModalMode('deschedule');
+      setActionModalMatches(matches);
+      setActionModalOpen(true);
+    } else {
+      executeDeschedule(task, 'today');
+    }
+  };
+
+  // Trigger Schedule / Restore Request (shows prompt if recurring across days)
+  const handleRequestSchedule = (task: TaskItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const matches = findRoutineMatches(task, schedules);
+    if (matches.length > 1 || task.isRepetitive) {
+      setActionModalTask(task);
+      setActionModalMode('schedule');
+      setActionModalMatches(matches);
+      setActionModalOpen(true);
+    } else {
+      executeSchedule(task, 'today');
+    }
+  };
+
+  // Trigger Delete Request (shows prompt if recurring across days)
+  const handleRequestDelete = (task: TaskItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const matches = findRoutineMatches(task, schedules);
+    if (matches.length > 1 || task.isRepetitive) {
+      setActionModalTask(task);
+      setActionModalMode('delete');
+      setActionModalMatches(matches);
+      setActionModalOpen(true);
+    } else {
+      executeDelete(task, 'today');
+    }
+  };
+
+  // Execute Deschedule (Today Only or All Days)
+  const executeDeschedule = (task: TaskItem, scope: 'today' | 'all') => {
+    const updatedSchedules = applyDeschedule(schedules, task, scope, selectedDay as DayKey);
+    onUpdateSchedules(updatedSchedules);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
+    onRefreshHistory();
+    setActionModalOpen(false);
+
+    const scopeText = scope === 'today' ? `for today (${currentSchedule.dayName})` : 'across ALL recurring days';
+    setToastMessage(`[DESCHEDULED]: "${task.title}" parked ${scopeText}.`);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Execute Schedule / Restore (Today Only or All Days)
+  const executeSchedule = (task: TaskItem, scope: 'today' | 'all') => {
+    const updatedSchedules = applySchedule(schedules, task, scope, selectedDay as DayKey);
+    onUpdateSchedules(updatedSchedules);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], completedTaskIds);
+    onRefreshHistory();
+    setActionModalOpen(false);
+
+    const scopeText = scope === 'today' ? `for today (${currentSchedule.dayName})` : 'across ALL recurring days';
+    setToastMessage(`[RESTORED]: "${task.title}" activated ${scopeText}.`);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Execute Delete (Today Only or Delete Forever from All Days)
+  const executeDelete = (task: TaskItem, scope: 'today' | 'all') => {
+    if (activeTimerTaskId === task.id) {
+      setActiveTimerTaskId(null);
+      setTimerSeconds(0);
+    }
+
+    const updatedSchedules = applyDelete(schedules, task, scope, selectedDay as DayKey);
+    const updatedCompleted = completedTaskIds.filter((id) => id !== task.id);
+    onUpdateSchedules(updatedSchedules);
+    saveCompletion(updatedCompleted);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay]?.tasks || [], updatedCompleted);
+    cleanZeroHourTasksFromHistory(updatedSchedules);
+    onRefreshHistory();
+    setActionModalOpen(false);
+
+    const scopeText = scope === 'today' ? `from today (${currentSchedule.dayName})` : 'FOREVER across ALL schedule days';
+    setToastMessage(`[DELETED]: "${task.title}" erased ${scopeText}.`);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Bulk: Deschedule all tasks for today
+  const handleDescheduleAllToday = () => {
+    const updated = descheduleAllForDay(schedules, selectedDay as DayKey);
+    onUpdateSchedules(updated);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
+    onRefreshHistory();
+    setToastMessage(`[ALL PARKED]: All active tasks for ${currentSchedule.dayName.toUpperCase()} moved to Parked.`);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Bulk: Restore all parked tasks for today
+  const handleRestoreAllToday = () => {
+    const updated = restoreAllForDay(schedules, selectedDay as DayKey);
+    onUpdateSchedules(updated);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updated[selectedDay].tasks, completedTaskIds);
+    onRefreshHistory();
+    setToastMessage(`[ALL RESTORED]: All parked tasks for ${currentSchedule.dayName.toUpperCase()} restored to Active.`);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Bulk: Completely remove all tasks across all 7 days
+  const handleRemoveAllTasksAcrossAllDays = () => {
+    if (activeTimerTaskId) {
+      setActiveTimerTaskId(null);
+      setTimerSeconds(0);
+    }
+
+    const emptySchedules = removeAllTasksFromAllDays(schedules);
+    setCompletedTaskIds([]);
+    saveCompletedTaskIdsForDate(selectedDateStr, []);
+    onUpdateSchedules(emptySchedules);
+
+    // Purge 0-hour unworked tasks from history while strictly preserving all logged work (>0 mins or completed)
+    cleanZeroHourTasksFromHistory(emptySchedules);
+    onRefreshHistory();
+
+    setIsConfirmRemoveAllOpen(false);
+    setToastMessage('[ALL TASKS REMOVED]: All tasks across all 7 days removed. Metrics & logged audit hours preserved.');
+    setTimeout(() => setToastMessage(null), 5000);
+  };
+
+  // Adjust tracked time manually on task for this specific calendar date
+  const handleAdjustTime = (taskId: string, deltaMinutes: number, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
+    const updatedMap = addTimeToDateTask(selectedDateStr, taskId, deltaMinutes);
+    setDateTrackedTimeMap({ ...updatedMap });
+    setLocalLastModified();
+
+    // Attach updated date-scoped time spent for syncing to history
+    const tasksWithDateTrackedTime = currentSchedule.tasks.map((t) => ({
+      ...t,
+      timeSpentMinutes: updatedMap[t.id] || 0,
+    }));
+
+    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, tasksWithDateTrackedTime, completedTaskIds);
+    onRefreshHistory();
+  };
+
+  const handleOpenEditModal = (task: TaskItem, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
+    setEditingTask(task);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveTaskEdit = (
+    updatedFields: Partial<TaskItem>,
+    scope: 'today' | 'all',
+    selectedRepeatDays?: DayKey[]
+  ) => {
+    if (!editingTask) return;
+    const updatedSchedules = applyTaskEdit(
+      schedules,
+      editingTask,
+      updatedFields,
+      scope,
+      selectedDay as DayKey,
+      selectedRepeatDays
+    );
+
+    onUpdateSchedules(updatedSchedules);
+    const dayTasks = updatedSchedules[selectedDay]?.tasks || [];
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, dayTasks, completedTaskIds);
+    onRefreshHistory();
+
+    setToastMessage(`[TASK UPDATED]: "${updatedFields.title || editingTask.title}" updated.`);
+    setTimeout(() => setToastMessage(null), 4000);
+    setEditingTask(null);
+    setIsEditModalOpen(false);
+  };
+
+  // Time editing modal for tasks on this active day
+  const [timeEditTargetTask, setTimeEditTargetTask] = useState<TaskItem | null>(null);
+  const [customExactMinutes, setCustomExactMinutes] = useState<string>('0');
+
+  const handleOpenTimeEditModal = (task: TaskItem, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
+    setTimeEditTargetTask(task);
+    const currentMins = dateTrackedTimeMap[task.id] || 0;
+    setCustomExactMinutes(String(currentMins));
+  };
+
+  const handleSaveTimeEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!timeEditTargetTask) return;
+    const newMinutes = Math.max(0, parseInt(customExactMinutes) || 0);
+    const currentMinutes = dateTrackedTimeMap[timeEditTargetTask.id] || 0;
+    const delta = newMinutes - currentMinutes;
+
+    handleAdjustTime(timeEditTargetTask.id, delta);
+    setToastMessage(`[TIME UPDATED]: "${timeEditTargetTask.title}" time set to ${newMinutes}m for ${selectedDateStr}`);
+    setTimeout(() => setToastMessage(null), 4000);
+    setTimeEditTargetTask(null);
+  };
+
+  // Toggle Live Timer
+  const handleToggleTimer = (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (activeTimerTaskId === taskId) {
+      // Stopping timer: commit accumulated seconds to task minutes
+      const additionalMinutes = Math.round(timerSeconds / 60);
+      if (additionalMinutes > 0) {
+        handleAdjustTime(taskId, additionalMinutes, e);
+      }
+      setActiveTimerTaskId(null);
+      setTimerSeconds(0);
+    } else {
+      // If another timer was running, flush it
+      if (activeTimerTaskId && timerSeconds > 0) {
+        const mins = Math.round(timerSeconds / 60);
+        if (mins > 0) {
+          handleAdjustTime(activeTimerTaskId, mins, e);
+        }
+      }
+      setActiveTimerTaskId(taskId);
+      setTimerSeconds(0);
+    }
+  };
+
+  // Add Task submit
+  const handleAddTaskSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+
+    const newTaskId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newTask: TaskItem = {
+      id: newTaskId,
+      title: newTitle.trim(),
+      category: newCategory,
+      time: newTimeSlot.trim() || '19:00 – 20:00',
+      durationMinutes: newDuration > 0 ? newDuration : 45,
+      timeSpentMinutes: 0,
+      details: newDetails.trim() || 'Custom created task item.',
+      isScheduled: newIsScheduled,
+      isRepetitive: newIsRepetitive,
+      repeatDays: newIsRepetitive ? newRepeatDays : [selectedDay as DayKey],
+      isCustom: true,
+      oneTimeDate: newIsRepetitive ? undefined : getDateForDayKey(selectedDay),
+    };
+
+    const targetDays = newIsRepetitive ? newRepeatDays : [selectedDay as DayKey];
+    const updatedSchedules = { ...schedules };
+
+    for (const dKey of targetDays) {
+      if (updatedSchedules[dKey]) {
+        updatedSchedules[dKey] = {
+          ...updatedSchedules[dKey],
+          tasks: sortTasksByStartTime([...updatedSchedules[dKey].tasks, { ...newTask }]),
+        };
+      }
+    }
+
+    onUpdateSchedules(updatedSchedules);
+    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay].tasks, completedTaskIds);
+    onRefreshHistory();
+
+    // Reset form
+    setNewTitle('');
+    setNewDetails('');
+    setIsAddingTask(false);
+  };
+
+  // Scheduled tasks count vs total - strictly sorted by start time
+  const scheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled !== false));
+  const descheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled === false));
+  const completedCount = scheduledTasks.filter((t) => completedTaskIds.includes(t.id)).length;
+  const totalTasks = scheduledTasks.length;
+  const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+
+  // Uncompleted scheduled tasks
+  const pendingScheduledTasks = scheduledTasks.filter((t) => !completedTaskIds.includes(t.id));
+
+  // Current real-time clock
+  const currentMinutes = currentClock.getHours() * 60 + currentClock.getMinutes();
+  const currentTimeDisplay = `${String(currentClock.getHours()).padStart(2, '0')}:${String(
+    currentClock.getMinutes()
+  ).padStart(2, '0')}`;
+  const todayDayName = schedules[todayKey]?.dayName || 'Today';
+
+  // Map pending scheduled tasks with their parsed time range
+  const pendingWithSlots = pendingScheduledTasks.map((t) => ({
+    task: t,
+    slot: parseTimeSlotRange(t.time, t.durationMinutes),
+  }));
+
+  // 1. Check if user is currently running a live stopwatch on a task
+  const runningTimerTask = activeTimerTaskId
+    ? scheduledTasks.find((t) => t.id === activeTimerTaskId)
+    : undefined;
+
+  // 2. Check if real-time clock falls inside an uncompleted task's time slot (only when viewing today)
+  const matchedSlotTask = isToday
+    ? pendingWithSlots.find(
+        (item) =>
+          item.slot &&
+          currentMinutes >= item.slot.start &&
+          currentMinutes < item.slot.end
+      )?.task
+    : undefined;
+
+  // 3. Find future scheduled tasks whose start time is strictly after currentMinutes
+  const futurePending = isToday
+    ? pendingWithSlots
+        .filter((item) => item.slot && item.slot.start > currentMinutes)
+        .sort((a, b) => a.slot!.start - b.slot!.start)
+    : [];
+  const upcomingTaskByTime = futurePending.length > 0 ? futurePending[0].task : undefined;
+
+  // 4. Overdue / backlog tasks whose scheduled end time was earlier than currentMinutes
+  const overduePending = isToday
+    ? pendingWithSlots
+        .filter((item) => item.slot && item.slot.end <= currentMinutes)
+        .sort((a, b) => a.slot!.start - b.slot!.start)
+    : [];
+
+  // Directive Mode determination
+  type DirectiveMode = 'PREVIEW' | 'IN_SESSION' | 'UPCOMING' | 'OVERDUE' | 'COMPLETED' | 'EMPTY';
+  let directiveMode: DirectiveMode = 'EMPTY';
+  let currentFocusTask: TaskItem | null = null;
+  let nextUpcomingTask: TaskItem | null = null;
+
+  if (scheduledTasks.length === 0) {
+    directiveMode = 'EMPTY';
+  } else if (pendingScheduledTasks.length === 0) {
+    directiveMode = 'COMPLETED';
+  } else if (!isToday) {
+    // Inspecting a different day in the schedule cycle
+    directiveMode = 'PREVIEW';
+    currentFocusTask = pendingScheduledTasks[0];
+    nextUpcomingTask = pendingScheduledTasks.length > 1 ? pendingScheduledTasks[1] : null;
+  } else if (runningTimerTask || matchedSlotTask) {
+    // Actively in session (live stopwatch or current time slot match)
+    directiveMode = 'IN_SESSION';
+    currentFocusTask = (runningTimerTask || matchedSlotTask)!;
+    nextUpcomingTask = upcomingTaskByTime || pendingScheduledTasks.find((t) => t.id !== currentFocusTask!.id) || null;
+  } else if (upcomingTaskByTime) {
+    // Standby before the next upcoming routine block
+    directiveMode = 'UPCOMING';
+    currentFocusTask = upcomingTaskByTime;
+    nextUpcomingTask = futurePending.length > 1 ? futurePending[1].task : null;
+  } else if (overduePending.length > 0) {
+    // All scheduled routine hours for today have ended, but past tasks remain open!
+    directiveMode = 'OVERDUE';
+    currentFocusTask = overduePending[0].task;
+    nextUpcomingTask = overduePending.length > 1 ? overduePending[1].task : null;
+  } else {
+    // Fallback if no slots matched
+    currentFocusTask = pendingScheduledTasks[0];
+    nextUpcomingTask = pendingScheduledTasks.length > 1 ? pendingScheduledTasks[1] : null;
+  }
+
+  const isDirectlyInSession = directiveMode === 'IN_SESSION';
+
+  const asciiBar = generateAsciiProgressBar(completedCount, totalTasks, barWidth, asciiStyle);
+
+  const daysList = [
+    { key: 'mon', label: 'MON', code: schedules.mon?.code || 'MON' },
+    { key: 'tue', label: 'TUE', code: schedules.tue?.code || 'TUE' },
+    { key: 'wed', label: 'WED', code: schedules.wed?.code || 'WED' },
+    { key: 'thu', label: 'THU', code: schedules.thu?.code || 'THU' },
+    { key: 'fri', label: 'FRI', code: schedules.fri?.code || 'FRI' },
+    { key: 'sat', label: 'SAT', code: schedules.sat?.code || 'SAT' },
+    { key: 'sun', label: 'SUN', code: schedules.sun?.code || 'SUN' },
+  ];
+
+  const totalTasksInCycle = useMemo(() => {
+    return Object.values(schedules).reduce((sum, s) => sum + (s.tasks?.length || 0), 0);
+  }, [schedules]);
+
+  const activeTasksInCycle = useMemo(() => {
+    return Object.values(schedules).reduce(
+      (sum, s) => sum + (s.tasks?.filter((t) => t.isScheduled !== false).length || 0),
+      0
+    );
+  }, [schedules]);
+
+  const parkedTasksInCycle = totalTasksInCycle - activeTasksInCycle;
+
+  const copyAsciiReport = () => {
+    const lines = [
+      `=== ROUTINE TRACKER [${currentSchedule.dayName.toUpperCase()}] ===`,
+      `CODE: ${currentSchedule.code} (${currentSchedule.categoryLabel})`,
+      `PROGRESS: ${asciiBar} (${percentage}%)`,
+      `SCHEDULED TASKS (${completedCount}/${totalTasks}):`,
+      ...scheduledTasks.map((t) => {
+        const isDone = completedTaskIds.includes(t.id);
+        const spent = dateTrackedTimeMap[t.id] || 0;
+        const timeLog = spent ? `[${spent}m spent]` : '';
+        return `[${isDone ? 'DONE' : 'PENDING'}] ${t.time} | ${t.title} ${timeLog}`;
+      }),
+      ...(descheduledTasks.length > 0
+        ? [
+            `DESCHEDULED / PARKED (${descheduledTasks.length}):`,
+            ...descheduledTasks.map((t) => `[DESCHEDULED] ${t.title}`),
+          ]
+        : []),
+      `=== END REPORT ===`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(lines).then(() => {
+      setCopyFeedback('REPORT COPIED TO CLIPBOARD');
+      setTimeout(() => setCopyFeedback(null), 2500);
+    });
+  };
+
+  return (
+    <div className="space-y-6 font-mono text-white">
+      {/* Schedule Cycle Selector Banner */}
+      <div className="border border-white bg-black">
+        <div className="bg-white text-black text-xs px-4 py-1.5 font-bold flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span>_SCHEDULE_CYCLE_SELECTOR</span>
+            <span className="text-[10px] tracking-widest uppercase opacity-80">
+              // REUSABLE ROUTINE TEMPLATE
+            </span>
+          </div>
+
+          {/* Active Routine Cycle indicator */}
+          <div className="flex items-center gap-2 text-[11px] font-mono">
+            <span className="bg-black/10 px-2.5 py-0.5 font-bold border border-black/20 text-black">
+              CYCLE: {weekStartStr} → {weekEndStr}
+            </span>
+            {selectedDay !== todayKey && (
+              <button
+                onClick={() => setSelectedDay(todayKey)}
+                className="bg-black text-white px-2 py-0.5 font-bold uppercase hover:bg-black/80 underline cursor-pointer"
+                title="Jump back to today's active day routine"
+              >
+                [TODAY ({todayKey.toUpperCase()})]
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {daysList.map((d) => {
+              const isActive = selectedDay === d.key;
+              const isTodayButton = todayKey === d.key;
+              return (
+                <button
+                  key={d.key}
+                  onClick={() => setSelectedDay(d.key)}
+                  className={`px-3 py-1 text-xs border transition-none cursor-pointer flex items-center gap-1.5 ${
+                    isActive
+                      ? 'border-white bg-white text-black font-bold'
+                      : 'border-white/40 bg-black text-white/80 hover:border-white hover:text-white'
+                  }`}
+                >
+                  <span>{d.label}</span>
+                  <span className={`text-[10px] ${isActive ? 'text-black/70' : 'text-white/60'}`}>
+                    [{d.code}]
+                  </span>
+                  {isTodayButton && (
+                    <span
+                      className={`text-[9px] px-1 py-0 border font-bold ${
+                        isActive ? 'border-black text-black' : 'border-white text-white'
+                      }`}
+                    >
+                      TODAY
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setSelectedDay(todayKey);
+              }}
+              className="border border-white/60 bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black hover:border-white transition-none cursor-pointer font-bold uppercase"
+            >
+              [JUMP TO TODAY]
+            </button>
+
+            {/* Cycle Actions Dropdown */}
+            <div className="relative" ref={cycleActionsRef}>
+              <button
+                onClick={() => setIsCycleActionsOpen((prev) => !prev)}
+                className={`border px-2.5 py-1 text-xs transition-none cursor-pointer font-bold uppercase flex items-center gap-1.5 ${
+                  isCycleActionsOpen
+                    ? 'border-white bg-white text-black'
+                    : 'border-white/70 bg-black text-white hover:bg-white hover:text-black hover:border-white'
+                }`}
+                title="Cycle-wide routine actions and management"
+              >
+                <span>[CYCLE ACTIONS {isCycleActionsOpen ? '▲' : '▼'}]</span>
+              </button>
+
+              {isCycleActionsOpen && (
+                <div className="absolute right-0 mt-1 w-64 border-2 border-white bg-black shadow-2xl z-40 p-1.5 space-y-1 text-xs font-mono">
+                  <div className="px-2 py-1 text-[10px] text-white/50 border-b border-white/20 uppercase tracking-wider font-bold">
+                    _CYCLE_MANAGEMENT
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setIsCycleActionsOpen(false);
+                      setIsManagerOpen(true);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer flex items-center justify-between font-bold"
+                  >
+                    <span>↻ RECURRING ROUTINES</span>
+                    <span className="text-[10px] opacity-60">MANAGER</span>
+                  </button>
+
+                  <div className="border-t border-white/20 my-1" />
+
+                  <button
+                    onClick={() => {
+                      setIsCycleActionsOpen(false);
+                      setIsConfirmRemoveAllOpen(true);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600 hover:text-white transition-none cursor-pointer flex items-center justify-between font-bold"
+                    title="Remove all tasks across all 7 days with audit safeguards"
+                  >
+                    <span>✕ REMOVE ALL TASKS</span>
+                    <span className="text-[10px] opacity-75 font-mono">(ALL DAYS)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setIsAddingTask(!isAddingTask)}
+              className="border border-white bg-white text-black px-3 py-1 text-xs font-bold transition-none cursor-pointer uppercase"
+            >
+              {isAddingTask ? '[CLOSE FORM]' : '[+ ADD TASK]'}
+            </button>
+          </div>
+        </div>
+
+        {/* Selected Day Info Sub-strip */}
+        <div className="border-t border-white/20 px-4 py-2 bg-black flex flex-wrap items-center justify-between text-xs gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-bold text-white uppercase">{currentSchedule.dayName}</span>
+            <span className="bg-white text-black text-[10px] font-mono font-bold px-1.5 py-0.5">
+              {selectedDateStr}
+            </span>
+            <span className="opacity-40">|</span>
+            <span className="text-white/80">{currentSchedule.categoryLabel}</span>
+            <span className="opacity-40">|</span>
+            <span className="opacity-70">{currentSchedule.focusSummary}</span>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] opacity-70">
+            <span>{scheduledTasks.length} SCHEDULED</span>
+            <span>•</span>
+            <span>{descheduledTasks.length} PARKED</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Notification Toast Banner */}
+      {toastMessage && (
+        <div className="border-2 border-white bg-white text-black p-3 text-xs font-bold flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-block w-2.5 h-2.5 bg-black animate-pulse" />
+            <span className="font-mono tracking-tight">{toastMessage}</span>
+          </div>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="text-[10px] font-black uppercase px-2 py-0.5 border border-black hover:bg-black hover:text-white cursor-pointer"
+          >
+            [DISMISS]
+          </button>
+        </div>
+      )}
+
+      {/* Inline Form: Add New Task */}
+      {isAddingTask && (
+        <div className="border-2 border-white bg-black p-4 md:p-6 space-y-4">
+          <div className="border-b border-white pb-2 flex items-center justify-between">
+            <span className="text-sm font-bold uppercase tracking-tight text-white">
+              _NEW_TASK_SPECIFICATION // ADD TO SCHEDULE
+            </span>
+            <span className="text-[10px] opacity-60">TARGET DAY: {currentSchedule.dayName.toUpperCase()}</span>
+          </div>
+
+          <form onSubmit={handleAddTaskSubmit} className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[11px] opacity-70 uppercase font-bold block">
+                  TASK TITLE *
+                </label>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="e.g., Deep Learning Architecture Review"
+                  required
+                  className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] opacity-70 uppercase font-bold block">
+                  CATEGORY
+                </label>
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value as TaskCategory)}
+                  className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
+                >
+                  <option value="ml">MACHINE LEARNING (ML)</option>
+                  <option value="cyber">CYBERSECURITY (CYBER)</option>
+                  <option value="gamedev">GAME DEVELOPMENT (GAMEDEV)</option>
+                  <option value="guitar">GUITAR &amp; MUSIC</option>
+                  <option value="workout">WORKOUT / PHYSICAL</option>
+                  <option value="college">COLLEGE / LAB</option>
+                  <option value="leisure">GAMING / LEISURE</option>
+                  <option value="routine">ROUTINE / HABIT</option>
+                  <option value="custom">CUSTOM INITIATIVE</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
+            <div className="space-y-1">
+              <TaskTimeBlockPicker
+                timeSlot={newTimeSlot}
+                durationMinutes={newDuration}
+                onChange={(newSlot, newDur) => {
+                  setNewTimeSlot(newSlot);
+                  setNewDuration(newDur);
+                }}
+              />
+            </div>
+
+            {/* Recurrence Type */}
+            <div className="border border-white/20 p-3 bg-white/5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] opacity-70 uppercase font-bold">
+                  RECURRENCE TYPE:
+                </span>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={newIsRepetitive}
+                      onChange={() => setNewIsRepetitive(true)}
+                      className="accent-white"
+                    />
+                    <span>REPETITIVE</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={!newIsRepetitive}
+                      onChange={() => setNewIsRepetitive(false)}
+                      className="accent-white"
+                    />
+                    <span>ONE-TIME</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* If repetitive, choose which days */}
+            {newIsRepetitive && (
+              <div className="space-y-1.5 border border-white/20 p-3 bg-white/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] opacity-70 uppercase font-bold">
+                    REPEAT ON DAYS:
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewRepeatDays(['mon', 'wed', 'fri'])}
+                      className="border border-white/40 px-1.5 py-0.5 text-[10px] hover:bg-white hover:text-black"
+                    >
+                      A-DAYS (M/W/F)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewRepeatDays(['tue', 'thu'])}
+                      className="border border-white/40 px-1.5 py-0.5 text-[10px] hover:bg-white hover:text-black"
+                    >
+                      B-DAYS (T/TH)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewRepeatDays(['sat', 'sun'])}
+                      className="border border-white/40 px-1.5 py-0.5 text-[10px] hover:bg-white hover:text-black"
+                    >
+                      WEEKENDS
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as DayKey[]).map((d) => {
+                    const isChecked = newRepeatDays.includes(d);
+                    return (
+                      <label
+                        key={d}
+                        className={`px-2 py-1 border text-xs cursor-pointer font-bold uppercase ${
+                          isChecked ? 'bg-white text-black border-white' : 'border-white/30 text-white/70'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewRepeatDays([...newRepeatDays, d]);
+                            } else {
+                              setNewRepeatDays(newRepeatDays.filter((k) => k !== d));
+                            }
+                          }}
+                          className="hidden"
+                        />
+                        {d.toUpperCase()}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-[11px] opacity-70 uppercase font-bold block">
+                DETAILS &amp; NOTES
+              </label>
+              <textarea
+                value={newDetails}
+                onChange={(e) => setNewDetails(e.target.value)}
+                placeholder="Specific instructions, neuroplastic focus, or resources..."
+                rows={2}
+                className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-white/20">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newIsScheduled}
+                  onChange={(e) => setNewIsScheduled(e.target.checked)}
+                  className="accent-white"
+                />
+                <span className="font-bold">SCHEDULE IMMEDIATELY FOR TODAY</span>
+              </label>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingTask(false)}
+                  className="border border-white/40 px-3 py-1 text-xs text-white hover:bg-white hover:text-black"
+                >
+                  CANCEL
+                </button>
+                <button
+                  type="submit"
+                  className="border border-white bg-white text-black px-4 py-1 text-xs font-bold hover:bg-white/90"
+                >
+                  SAVE &amp; COMMIT TASK
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Main Two-Column Editorial Grid */}
+      <div className="flex flex-col lg:flex-row gap-6">
+        {/* Left Column: _TIMELINE_LOG */}
+        <section className="flex-1 flex flex-col border border-white bg-black">
+          <div className="bg-white text-black text-sm px-4 py-1 font-bold flex items-center justify-between">
+            <span>_TIMELINE_LOG</span>
+            <span className="text-xs opacity-75 font-mono font-normal">
+              [{completedCount}/{totalTasks} COMPLETED]
+            </span>
+          </div>
+
+          <div className="p-4 md:p-6 space-y-4 flex-1">
+            {/* _CURRENT_DIRECTIVE: WHAT TO DO RIGHT NOW */}
+            {currentFocusTask && !completedTaskIds.includes(currentFocusTask.id) ? (
+              <div className="border-2 border-white bg-white text-black p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/20 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-block w-2.5 h-2.5 bg-black ${
+                        isDirectlyInSession ? 'animate-ping' : ''
+                      }`}
+                    />
+                    <span className="text-xs font-black uppercase tracking-wider">
+                      {directiveMode === 'PREVIEW'
+                        ? `_SCHEDULED_DIRECTIVE // PREVIEWING ${currentSchedule.dayName.toUpperCase()}`
+                        : directiveMode === 'IN_SESSION'
+                        ? '_CURRENT_DIRECTIVE // ACTIVE IN-PROGRESS'
+                        : directiveMode === 'UPCOMING'
+                        ? `_CURRENT_DIRECTIVE // STANDBY (NO TASK AT ${currentTimeDisplay})`
+                        : `_CURRENT_DIRECTIVE // DAY ROUTINES CONCLUDED (${currentTimeDisplay})`}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest bg-black text-white px-2 py-0.5">
+                    {directiveMode === 'PREVIEW'
+                      ? `PREVIEWING ${currentSchedule.dayName.toUpperCase()}`
+                      : activeTimerTaskId === currentFocusTask.id
+                      ? 'STOPWATCH RUNNING'
+                      : matchedSlotTask?.id === currentFocusTask.id
+                      ? 'CURRENT TIME SLOT MATCH'
+                      : directiveMode === 'UPCOMING'
+                      ? 'NEXT UPCOMING TASK'
+                      : `OVERDUE BACKLOG (${overduePending.length} PENDING)`}
+                  </span>
+                </div>
+
+                {/* Day Context Switcher Banner if Previewing another day or historical week */}
+                {directiveMode === 'PREVIEW' && (
+                  <div className="bg-black/5 border border-black/20 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-[11px] text-black/70">
+                      Viewing schedule for <strong>{currentSchedule.dayName}</strong> ({selectedDateStr}). Today is <strong>{todayDayName}</strong> ({getTodayDateStr()}).
+                    </span>
+                    <button
+                      onClick={() => {
+                        setSelectedDay(todayKey);
+                      }}
+                      className="text-[10px] font-bold bg-black text-white px-2 py-0.5 uppercase hover:bg-black/80 transition-none cursor-pointer"
+                    >
+                      [SWITCH TO TODAY ({todayKey.toUpperCase()})]
+                    </button>
+                  </div>
+                )}
+
+                {/* Notice if upcoming has earlier overdue tasks */}
+                {directiveMode === 'UPCOMING' && overduePending.length > 0 && (
+                  <div className="bg-black/5 border border-black/20 px-3 py-1 text-[11px] text-black/80 flex items-center justify-between">
+                    <span>
+                      Notice: <strong>{overduePending.length} task(s)</strong> from earlier today remain uncompleted.
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="space-y-1 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-base md:text-lg font-black tracking-tight">
+                        {directiveMode === 'UPCOMING'
+                          ? 'NEXT: '
+                          : directiveMode === 'OVERDUE'
+                          ? 'OVERDUE: '
+                          : directiveMode === 'PREVIEW'
+                          ? 'TARGET: '
+                          : ''}
+                        {currentFocusTask.title}
+                      </span>
+                      <span className="text-[10px] uppercase border border-black px-1.5 py-0 font-bold">
+                        {currentFocusTask.category}
+                      </span>
+                      <span className="text-xs font-mono font-bold">
+                        [{currentFocusTask.time}]
+                      </span>
+                      {directiveMode === 'UPCOMING' && (
+                        <span className="bg-black text-white text-[9px] font-bold px-1.5 py-0 tracking-wider">
+                          UPCOMING
+                        </span>
+                      )}
+                      {directiveMode === 'OVERDUE' && (
+                        <span className="bg-black text-white text-[9px] font-bold px-1.5 py-0 tracking-wider">
+                          MISSED / OPEN
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-black/80 font-mono leading-relaxed">
+                      {currentFocusTask.details || 'No additional instructions logged.'}
+                    </p>
+                    {directiveMode === 'OVERDUE' && (
+                      <p className="text-[11px] text-black/60 font-mono italic">
+                        All scheduled routine hours for today have ended. This task was scheduled earlier at {currentFocusTask.time} and remains open.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      onClick={(e) => handleToggleTimer(currentFocusTask.id, e)}
+                      className={`px-3 py-1.5 text-xs font-bold border-2 border-black transition-none cursor-pointer uppercase ${
+                        activeTimerTaskId === currentFocusTask.id
+                          ? 'bg-black text-white animate-pulse'
+                          : 'bg-transparent text-black hover:bg-black hover:text-white'
+                      }`}
+                    >
+                      {activeTimerTaskId === currentFocusTask.id
+                        ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
+                            timerSeconds % 60
+                          ).padStart(2, '0')}]`
+                        : directiveMode === 'UPCOMING'
+                        ? '[START EARLY]'
+                        : directiveMode === 'OVERDUE'
+                        ? '[START LATE]'
+                        : '[START TIMER]'}
+                    </button>
+
+                    <button
+                      onClick={() => toggleTaskCompletion(currentFocusTask.id)}
+                      className="px-3 py-1.5 text-xs font-bold border-2 border-black bg-black text-white hover:bg-black/80 transition-none cursor-pointer uppercase"
+                    >
+                      [MARK DONE]
+                    </button>
+
+                    <button
+                      onClick={(e) => handleOpenTimeEditModal(currentFocusTask, e)}
+                      className="px-2.5 py-1.5 text-xs font-bold border-2 border-black bg-white text-black hover:bg-black hover:text-white transition-none cursor-pointer uppercase"
+                      title="Edit exact tracked time for current directive task"
+                    >
+                      [EDIT TIME]
+                    </button>
+
+                    <button
+                      onClick={(e) => handleOpenEditModal(currentFocusTask, e)}
+                      className="px-2.5 py-1.5 text-xs font-bold border border-black hover:bg-black hover:text-white text-black transition-none cursor-pointer uppercase"
+                      title="Edit this directive task"
+                    >
+                      [EDIT TASK]
+                    </button>
+
+                    <button
+                      onClick={(e) => handleAdjustTime(currentFocusTask.id, 15, e)}
+                      className="px-2 py-1.5 text-xs font-bold border border-black/40 hover:border-black text-black transition-none cursor-pointer"
+                    >
+                      +15m
+                    </button>
+
+                    <button
+                      onClick={(e) => handleAdjustTime(currentFocusTask.id, -15, e)}
+                      className="px-2 py-1.5 text-xs font-bold border border-black/40 hover:border-black text-black transition-none cursor-pointer"
+                    >
+                      -15m
+                    </button>
+                  </div>
+                </div>
+
+                {/* SHOW NEXT UPCOMING TASK BANNER */}
+                {nextUpcomingTask && (
+                  <div className="border-t border-black/20 pt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="bg-black text-white text-[9px] font-black px-1.5 py-0.5 tracking-wider">
+                        {directiveMode === 'OVERDUE'
+                          ? 'NEXT OVERDUE:'
+                          : isDirectlyInSession
+                          ? 'NEXT:'
+                          : 'FOLLOWED BY:'}
+                      </span>
+                      <span className="font-bold text-black text-xs sm:text-sm tracking-tight">
+                        {nextUpcomingTask.title}
+                      </span>
+                      <span className="font-mono text-black/70 text-xs font-bold">
+                        [{nextUpcomingTask.time}]
+                      </span>
+                      <span className="text-[10px] uppercase border border-black/40 px-1 py-0 font-bold">
+                        {nextUpcomingTask.category}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => handleOpenEditModal(nextUpcomingTask, e)}
+                        className="border border-black/40 hover:border-black px-2 py-0.5 text-[10px] font-bold uppercase cursor-pointer text-black"
+                        title="Edit next upcoming task"
+                      >
+                        [EDIT NEXT]
+                      </button>
+                      <button
+                        onClick={(e) => handleToggleTimer(nextUpcomingTask.id, e)}
+                        className="border border-black bg-transparent hover:bg-black hover:text-white px-2 py-0.5 text-[10px] font-bold uppercase cursor-pointer text-black"
+                        title="Start timer on next task early"
+                      >
+                        [START EARLY]
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : scheduledTasks.length > 0 && completedCount === scheduledTasks.length ? (
+              <div className="border border-white bg-black p-4 text-center space-y-1">
+                <div className="text-xs font-bold text-white uppercase tracking-wider">
+                  *** ALL SCHEDULED TASKS COMPLETED FOR {currentSchedule.dayName.toUpperCase()} ***
+                </div>
+                <p className="text-xs opacity-60">
+                  Daily directive satisfied (100%). System standing by.
+                </p>
+              </div>
+            ) : null}
+
+            {/* SCHEDULED ACTIVE TASKS */}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] opacity-60 uppercase font-bold tracking-wider">
+                <span>ACTIVE SCHEDULED TASKS ({scheduledTasks.length})</span>
+                {scheduledTasks.length > 0 && (
+                  <button
+                    onClick={handleDescheduleAllToday}
+                    className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase transition-none"
+                    title="Park/deschedule all active tasks for today in 1 click"
+                  >
+                    [DESCHEDULE ALL TODAY]
+                  </button>
+                )}
+              </div>
+
+              {scheduledTasks.length === 0 ? (
+                <div className="p-6 border border-white/20 text-center text-xs opacity-60">
+                  NO TASKS CURRENTLY SCHEDULED FOR {currentSchedule.dayName.toUpperCase()}. USE [+ ADD TASK] ABOVE OR ACTIVATE PARKED TASKS BELOW.
+                </div>
+              ) : (
+                scheduledTasks.map((task) => {
+                  const isCompleted = completedTaskIds.includes(task.id);
+                  const isInProgress = currentFocusTask?.id === task.id && !isCompleted;
+                  const isTimerRunning = activeTimerTaskId === task.id;
+                  const timeSpent = dateTrackedTimeMap[task.id] || 0;
+                  const matches = findRoutineMatches(task, schedules);
+                  const isRecurringAcrossDays = matches.length > 1;
+
+                  return (
+                    <div
+                      key={task.id}
+                      className={`border p-3 space-y-2 transition-none ${
+                        isCompleted
+                          ? 'border-white/20 bg-black opacity-50'
+                          : isInProgress
+                          ? 'border-white bg-white/10 ring-1 ring-white'
+                          : 'border-white/30 bg-black hover:border-white/60'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        {/* Status Checkbox & Title */}
+                        <div
+                          onClick={() => toggleTaskCompletion(task.id)}
+                          className="flex items-start gap-2.5 cursor-pointer flex-1"
+                        >
+                          <span
+                            className={`text-xs px-2 py-0.5 font-bold border shrink-0 ${
+                              isCompleted
+                                ? 'bg-white text-black border-white'
+                                : isInProgress
+                                ? 'border-white text-black bg-white'
+                                : 'border-white/40 text-white/60'
+                            }`}
+                          >
+                            {isCompleted ? '[DONE]' : isInProgress ? '[IN_PROGRESS]' : '[PENDING]'}
+                          </span>
+
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-sm font-bold tracking-tight ${
+                                  isCompleted ? 'line-through opacity-70' : 'text-white'
+                                }`}
+                              >
+                                {task.title}
+                              </span>
+
+                              {isInProgress && (
+                                <span className="bg-white text-black text-[9px] font-black px-1.5 py-0 tracking-wider">
+                                  &gt;&gt; IN PROGRESS &lt;&lt;
+                                </span>
+                              )}
+
+                              <span className="text-xs font-mono opacity-60">
+                                [{task.time}]
+                              </span>
+
+                              <span className="text-[10px] uppercase border border-white/30 px-1 py-0 opacity-75">
+                                {task.category}
+                              </span>
+
+                              {isRecurringAcrossDays ? (
+                                <span
+                                  className="border border-white/60 bg-white/10 px-1 py-0 text-[9px] text-white font-mono"
+                                  title={`Recurring across ${matches.length} days: ${matches.map((m) => m.dayKey.toUpperCase()).join(', ')}`}
+                                >
+                                  RECURRING ({matches.length}D)
+                                </span>
+                              ) : (
+                                <span className="text-[10px] uppercase opacity-50">
+                                  {task.isRepetitive ? '[REPETITIVE]' : '[ONE-TIME]'}
+                                </span>
+                              )}
+
+                              {task.highlight && (
+                                <span className="bg-white text-black text-[9px] font-bold px-1 py-0">
+                                  PRIORITY
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-xs opacity-70 mt-1 leading-relaxed">
+                              {task.details}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Edit, Deschedule & Delete Actions */}
+                        <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                          <button
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold uppercase transition-none cursor-pointer"
+                            title="Edit task specifications, category, time, or recurrence"
+                          >
+                            [EDIT]
+                          </button>
+
+                          <button
+                            onClick={(e) => handleRequestDeschedule(task, e)}
+                            className="border border-white/30 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold uppercase transition-none cursor-pointer"
+                            title="Deschedule / park this task (today only or all days)"
+                          >
+                            [DESCHEDULE]
+                          </button>
+
+                          <button
+                            onClick={(e) => handleRequestDelete(task, e)}
+                            className="border border-white/30 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold uppercase transition-none cursor-pointer"
+                            title="Delete task (today only or erase forever from all days)"
+                          >
+                            [DEL]
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* TIME TRACKER CONTROLS FOR THIS TASK */}
+                      <div className="border-t border-white/20 pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div
+                          onClick={(e) => handleOpenTimeEditModal(task, e)}
+                          className="flex items-center gap-2 cursor-pointer group"
+                          title="Click to edit tracked time for this task on this day"
+                        >
+                          <span className="text-[10px] opacity-60 uppercase font-bold">
+                            TIME TRACKED:
+                          </span>
+                          <span className="font-bold text-white font-mono group-hover:underline underline-offset-2">
+                            {formatMinutes(timeSpent)} / {task.durationMinutes}m planned
+                          </span>
+
+                          {timeSpent >= task.durationMinutes && (
+                            <span className="bg-white text-black text-[9px] font-bold px-1 py-0">
+                              GOAL MET
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono opacity-50 group-hover:opacity-100">
+                            [EDIT]
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {/* Live Timer button */}
+                          <button
+                            onClick={(e) => handleToggleTimer(task.id, e)}
+                            className={`px-2 py-0.5 text-xs font-bold border transition-none cursor-pointer ${
+                              isTimerRunning
+                                ? 'bg-white text-black border-white animate-pulse'
+                                : 'border-white/50 text-white hover:border-white'
+                            }`}
+                          >
+                            {isTimerRunning
+                              ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
+                                  timerSeconds % 60
+                                ).padStart(2, '0')}]`
+                              : '[START TIMER]'}
+                          </button>
+
+                          {/* Dedicated Edit Time Modal Button */}
+                          <button
+                            onClick={(e) => handleOpenTimeEditModal(task, e)}
+                            className="border border-white bg-white text-black px-2 py-0.5 text-[10px] font-bold uppercase hover:bg-white/80 cursor-pointer transition-none"
+                            title="Edit exact tracked time or set minutes directly"
+                          >
+                            [EDIT TIME]
+                          </button>
+
+                          {/* Quick manual adjusters */}
+                          <button
+                            onClick={(e) => handleAdjustTime(task.id, 15, e)}
+                            className="border border-white/30 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer font-bold"
+                            title="Quick add 15 minutes"
+                          >
+                            +15m
+                          </button>
+                          <button
+                            onClick={(e) => handleAdjustTime(task.id, 30, e)}
+                            className="border border-white/30 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer font-bold"
+                            title="Quick add 30 minutes"
+                          >
+                            +30m
+                          </button>
+                          <button
+                            onClick={(e) => handleAdjustTime(task.id, -15, e)}
+                            className="border border-white/30 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer"
+                            title="Quick subtract 15 minutes"
+                          >
+                            -15m
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* DESCHEDULED / PARKED TASKS SECTION */}
+            {descheduledTasks.length > 0 && (
+              <div className="space-y-2 pt-4 border-t border-white/20">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] opacity-60 uppercase font-bold tracking-wider">
+                  <span>DESCHEDULED / PARKED TASKS ({descheduledTasks.length})</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleRestoreAllToday}
+                      className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase transition-none"
+                      title="Restore all parked tasks back to active on today in 1 click"
+                    >
+                      [RESTORE ALL TODAY]
+                    </button>
+                    <span className="hidden sm:inline">CLICK [SCHEDULE] TO RESTORE</span>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-white/10 border border-white/20 bg-black">
+                  {descheduledTasks.map((task) => {
+                    const matches = findRoutineMatches(task, schedules);
+                    const isRecurringAcrossDays = matches.length > 1;
+
+                    return (
+                      <div
+                        key={task.id}
+                        className="p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 opacity-65 hover:opacity-100 transition-none"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-white line-through">
+                              {task.title}
+                            </span>
+                            <span className="text-[10px] uppercase border border-white/30 px-1 py-0">
+                              {task.category}
+                            </span>
+                            <span className="text-[10px] opacity-60 font-mono">
+                              [{task.time}]
+                            </span>
+                            {isRecurringAcrossDays && (
+                              <span
+                                className="border border-white/40 px-1 py-0 text-[9px] text-white/80 font-mono"
+                                title={`Recurs across ${matches.length} days: ${matches.map((m) => m.dayKey.toUpperCase()).join(', ')}`}
+                              >
+                                RECURRING ({matches.length}D)
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] opacity-60">{task.details}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                          <button
+                            onClick={(e) => handleOpenTimeEditModal(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase font-mono"
+                            title="Edit or view tracked time for this parked task on this day"
+                          >
+                            [TIME: {formatMinutes(dateTrackedTimeMap[task.id] || 0)}]
+                          </button>
+                          <button
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase"
+                            title="Edit this parked task"
+                          >
+                            [EDIT]
+                          </button>
+                          <button
+                            onClick={(e) => handleRequestSchedule(task, e)}
+                            className="border border-white bg-white text-black px-2 py-0.5 text-[10px] font-bold uppercase transition-none cursor-pointer"
+                            title="Restore this task (today only or across all days)"
+                          >
+                            [SCHEDULE]
+                          </button>
+                          <button
+                            onClick={(e) => handleRequestDelete(task, e)}
+                            className="border border-white/40 px-2 py-0.5 text-[10px] text-white hover:bg-white hover:text-black cursor-pointer uppercase"
+                            title="Delete task (today only or erase forever from all days)"
+                          >
+                            [DEL]
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick interactive action strip at bottom of timeline */}
+          <div className="border-t border-white/20 p-3 bg-black flex flex-wrap items-center justify-between text-xs gap-2">
+            <div className="opacity-60 text-[11px]">
+              SCHEDULED: {scheduledTasks.length} | PARKED: {descheduledTasks.length}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => saveCompletion(scheduledTasks.map((t) => t.id))}
+                className="border border-white/40 bg-black px-2 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+              >
+                [MARK ALL DONE]
+              </button>
+              <button
+                onClick={() => saveCompletion([])}
+                className="border border-white/40 bg-black px-2 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+              >
+                [RESET DAY]
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Right Column: _SYSTEM_STATS & TIME LOGGED SUMMARY */}
+        <section className="w-full lg:w-80 flex flex-col gap-6">
+          {/* Card 1: _PROGRESS_METER */}
+          <div className="border border-white bg-black">
+            <div className="bg-white text-black text-xs px-4 py-1 font-bold flex items-center justify-between">
+              <span>_PROGRESS_METER</span>
+              <span className="text-[10px] font-mono">{percentage}%</span>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="space-y-1">
+                <div className="text-[10px] opacity-60 uppercase font-bold">ASCII METRIC:</div>
+                <div className="font-mono text-xs font-bold text-white select-all overflow-x-auto">
+                  {asciiBar}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs border-t border-white/20 pt-3">
+                <div>
+                  <span className="opacity-50 text-[10px] uppercase block">Scheduled:</span>
+                  <span className="font-bold text-white">{scheduledTasks.length} tasks</span>
+                </div>
+                <div>
+                  <span className="opacity-50 text-[10px] uppercase block">Completed:</span>
+                  <span className="font-bold text-white">
+                    {completedCount} / {totalTasks}
+                  </span>
+                </div>
+              </div>
+
+              {/* ASCII style switcher */}
+              <div className="border-t border-white/20 pt-3 space-y-2">
+                <div className="text-[10px] opacity-60 uppercase font-bold">METER FORMAT:</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {(['blocks', 'equals', 'hashes', 'pipes'] as AsciiBarStyle[]).map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => setAsciiStyle(style)}
+                      className={`text-[10px] py-1 border font-mono transition-none cursor-pointer uppercase ${
+                        asciiStyle === style
+                          ? 'border-white bg-white text-black font-bold'
+                          : 'border-white/30 text-white/70 hover:border-white hover:text-white'
+                      }`}
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={copyAsciiReport}
+                className="w-full border border-white bg-black py-1.5 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer font-bold uppercase tracking-wider"
+              >
+                {copyFeedback ? `[${copyFeedback}]` : '[COPY ASCII STATUS]'}
+              </button>
+            </div>
+          </div>
+
+          {/* Card 2: _POMODORO_SESSION_ENGINE */}
+          <PomodoroTimer
+            scheduledTasks={scheduledTasks}
+            activeFocusTaskId={currentFocusTask?.id}
+            onLogMinutesToTask={(taskId, mins) => {
+              handleAdjustTime(taskId, mins);
+            }}
+          />
+        </section>
+      </div>
+
+      {/* Action Modal: Scope-based Deschedule / Delete / Restore Prompt */}
+      <RecurringTaskActionModal
+        isOpen={actionModalOpen}
+        onClose={() => setActionModalOpen(false)}
+        task={actionModalTask}
+        mode={actionModalMode}
+        currentDayKey={selectedDay as DayKey}
+        currentDayName={currentSchedule.dayName}
+        matchingDays={actionModalMatches}
+        onConfirm={(scope) => {
+          if (!actionModalTask) return;
+          if (actionModalMode === 'deschedule') {
+            executeDeschedule(actionModalTask, scope);
+          } else if (actionModalMode === 'delete') {
+            executeDelete(actionModalTask, scope);
+          } else if (actionModalMode === 'schedule') {
+            executeSchedule(actionModalTask, scope);
+          }
+        }}
+      />
+
+      {/* Global Recurring Routines Manager Modal */}
+      <RecurringRoutinesManagerModal
+        isOpen={isManagerOpen}
+        onClose={() => setIsManagerOpen(false)}
+        schedules={schedules}
+        onUpdateSchedules={onUpdateSchedules}
+        onRefreshHistory={onRefreshHistory}
+        currentDayKey={selectedDay as DayKey}
+      />
+
+      {/* Edit Task Specification Modal */}
+      <EditTaskModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingTask(null);
+        }}
+        task={editingTask}
+        currentDayKey={selectedDay as DayKey}
+        currentDayName={currentSchedule.dayName}
+        schedules={schedules}
+        onSave={handleSaveTaskEdit}
+      />
+
+      {/* Edit Tracked Time Modal for this Active Day */}
+      {timeEditTargetTask && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="border-2 border-white bg-black max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/20 pb-2">
+              <span className="text-sm font-bold text-white uppercase tracking-wider">
+                _EDIT_TRACKED_TIME // {selectedDateStr}
+              </span>
+              <button
+                type="button"
+                onClick={() => setTimeEditTargetTask(null)}
+                className="text-white hover:opacity-60 text-xs font-bold font-mono cursor-pointer"
+              >
+                [X CLOSE]
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTimeEdit} className="space-y-3.5 text-xs">
+              <div className="bg-white/5 border border-white/20 p-3 space-y-1">
+                <div className="text-[10px] opacity-60 uppercase font-bold">TASK SPECIFICATION:</div>
+                <div className="text-white font-bold text-sm tracking-tight">{timeEditTargetTask.title}</div>
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] opacity-75">
+                  <span className="uppercase border border-white/30 px-1 py-0 text-[10px]">
+                    {timeEditTargetTask.category}
+                  </span>
+                  <span>•</span>
+                  <span>Planned: <strong>{timeEditTargetTask.durationMinutes}m</strong></span>
+                  <span>•</span>
+                  <span>Currently Tracked: <strong>{formatMinutes(dateTrackedTimeMap[timeEditTargetTask.id] || 0)}</strong></span>
+                </div>
+              </div>
+
+              <div className="space-y-1 pt-1">
+                <label className="text-[10px] opacity-70 uppercase font-bold block">
+                  ENTER EXACT TOTAL MINUTES FOR THIS DAY:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    value={customExactMinutes}
+                    onChange={(e) => setCustomExactMinutes(e.target.value)}
+                    className="flex-1 bg-black border border-white/40 px-3 py-1.5 text-base text-white font-mono focus:border-white focus:outline-none"
+                    placeholder="0"
+                    autoFocus
+                  />
+                  <span className="text-xs font-mono opacity-60">minutes</span>
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[10px] opacity-70 uppercase font-bold block">
+                  QUICK PRESETS (SET EXACT TOTAL):
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCustomExactMinutes('0')}
+                    className="py-1 text-xs border border-white/30 text-white hover:border-white font-mono cursor-pointer transition-none"
+                  >
+                    0m (Reset)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomExactMinutes(String(timeEditTargetTask.durationMinutes))}
+                    className="py-1 text-xs border border-white/30 text-white hover:border-white font-mono cursor-pointer transition-none"
+                  >
+                    Planned ({timeEditTargetTask.durationMinutes}m)
+                  </button>
+                  {[15, 30, 45, 60, 90, 120].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setCustomExactMinutes(String(mins))}
+                      className="py-1 text-xs border border-white/30 text-white hover:border-white font-mono cursor-pointer transition-none"
+                    >
+                      {mins}m
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Relative Adjustments */}
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[10px] opacity-70 uppercase font-bold block">
+                  OR ADJUST CURRENT VALUE:
+                </label>
+                <div className="grid grid-cols-6 gap-1">
+                  {[15, 30, 45, 60, -15, -30].map((delta) => (
+                    <button
+                      key={delta}
+                      type="button"
+                      onClick={() => {
+                        const cur = parseInt(customExactMinutes) || 0;
+                        setCustomExactMinutes(String(Math.max(0, cur + delta)));
+                      }}
+                      className="py-1 text-xs border border-white/30 text-white hover:border-white font-mono cursor-pointer transition-none text-center"
+                    >
+                      {delta > 0 ? `+${delta}m` : `${delta}m`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/20">
+                <button
+                  type="button"
+                  onClick={() => setTimeEditTargetTask(null)}
+                  className="border border-white/40 px-3 py-1.5 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+                >
+                  CANCEL
+                </button>
+                <button
+                  type="submit"
+                  className="border border-white bg-white text-black px-4 py-1.5 text-xs font-bold hover:bg-white/90 transition-none cursor-pointer uppercase"
+                >
+                  SAVE TRACKED TIME ({customExactMinutes}m)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Complete Removal Across All Days */}
+      {isConfirmRemoveAllOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xs font-mono text-white"
+          onClick={() => setIsConfirmRemoveAllOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg border-2 border-red-500 bg-black shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-red-500/40 pb-2">
+              <div className="flex items-center gap-2 text-red-400 font-black text-sm uppercase">
+                <span className="w-2.5 h-2.5 bg-red-500 animate-pulse" />
+                <span>_CONFIRM_REMOVE_ALL_TASKS</span>
+              </div>
+              <button
+                onClick={() => setIsConfirmRemoveAllOpen(false)}
+                className="text-white/60 hover:text-white font-bold text-xs cursor-pointer"
+              >
+                [X]
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs leading-relaxed">
+              <p className="font-bold text-white">
+                Are you sure you want to completely remove ALL tasks across all 7 days (Monday through Sunday)?
+              </p>
+
+              <div className="bg-red-950/20 border border-red-500/30 p-3 space-y-2 text-white/90">
+                <div className="font-bold text-red-300 uppercase text-[11px]">
+                  SCOPE: {totalTasksInCycle} TOTAL TASKS ({activeTasksInCycle} active, {parkedTasksInCycle} parked)
+                </div>
+                <ul className="list-disc pl-4 space-y-1 text-[11px] text-white/80">
+                  <li>
+                    <strong>0-Hour Tasks:</strong> Any task with 0 logged minutes will be permanently removed from schedules, metrics, and audit.
+                  </li>
+                  <li>
+                    <strong>Preserved Audits &amp; Metrics:</strong> Any task with actual logged work (&gt; 0 minutes or completed sessions) will keep its tracked time and session counts 100% intact in history and audit.
+                  </li>
+                  <li>
+                    <strong>Cycle Slate:</strong> All 7 days will be reset to a clean slate, ready for adding new routines.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/20">
+              <button
+                type="button"
+                onClick={() => setIsConfirmRemoveAllOpen(false)}
+                className="border border-white/40 px-3 py-1.5 text-xs text-white hover:bg-white hover:text-black cursor-pointer font-bold uppercase transition-none"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                onClick={handleRemoveAllTasksAcrossAllDays}
+                className="border border-red-500 bg-red-600 text-white px-4 py-1.5 text-xs font-black uppercase hover:bg-red-500 cursor-pointer transition-none shadow-md"
+              >
+                CONFIRM &amp; REMOVE ALL TASKS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
