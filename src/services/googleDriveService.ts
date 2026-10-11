@@ -44,20 +44,7 @@ export async function getOAuthClientId(): Promise<string> {
     // ignore
   }
 
-  // 2. Try fetching config from static assets
-  try {
-    const res = await fetch('./firebase-applet-config.json');
-    if (res.ok) {
-      const config = await res.json();
-      if (config.oAuthClientId) {
-        cachedClientId = config.oAuthClientId;
-        return config.oAuthClientId;
-      }
-    }
-  } catch {
-    // fallback
-  }
-
+  // 2. Fallback to default project OAuth client ID
   cachedClientId = DEFAULT_PROJECT_OAUTH_CLIENT_ID;
   return cachedClientId;
 }
