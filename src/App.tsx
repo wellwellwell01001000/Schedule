@@ -14,6 +14,7 @@ import {
   loadSchedules,
   saveSchedules,
   loadHierarchyHistory,
+  saveHierarchyHistory,
   purgeAllDataAndStartClean,
 } from './data/historyStore';
 import {
@@ -106,11 +107,7 @@ export default function App() {
     setSchedules(newSchedules);
     saveSchedules(newSchedules);
     setHistory(newHistory);
-    try {
-      localStorage.setItem('alt_routine_hierarchy_history_v1', JSON.stringify(newHistory));
-    } catch {
-      // ignore
-    }
+    saveHierarchyHistory(newHistory);
     if (restoredIso) {
       setLocalLastModified(restoredIso);
     }
