@@ -27,18 +27,24 @@ export function TaskTimeBlockPicker({
   const [currentDuration, setCurrentDuration] = useState<number>(
     durationMinutes > 0 ? durationMinutes : initial.durationMinutes
   );
+  const [estimateInputStr, setEstimateInputStr] = useState<string>(() =>
+    String(durationMinutes > 0 ? durationMinutes : initial.durationMinutes)
+  );
 
   useEffect(() => {
     const parsed = parseTimeSlot(timeSlot, durationMinutes);
     setStartMinutes(parsed.startMinutes);
     setEndMinutes(parsed.endMinutes);
-    setCurrentDuration(durationMinutes > 0 ? durationMinutes : parsed.durationMinutes);
+    const dur = durationMinutes > 0 ? durationMinutes : parsed.durationMinutes;
+    setCurrentDuration(dur);
+    setEstimateInputStr(String(dur));
   }, [timeSlot, durationMinutes]);
 
   const emitChange = (newStart: number, newEnd: number, newDur: number) => {
     setStartMinutes(newStart);
     setEndMinutes(newEnd);
     setCurrentDuration(newDur);
+    setEstimateInputStr(String(newDur));
     onChange(formatTimeSlot(newStart, newEnd), newDur);
   };
 
@@ -91,6 +97,7 @@ export function TaskTimeBlockPicker({
 
   const handleEstimateChange = (newMinutes: number) => {
     const safeMins = Math.max(5, Math.min(1440, newMinutes));
+    setEstimateInputStr(String(safeMins));
     const updated = updateEstimateDuration(startMinutes, safeMins);
     emitChange(updated.startMinutes, updated.endMinutes, updated.durationMinutes);
   };
@@ -201,16 +208,41 @@ export function TaskTimeBlockPicker({
             </span>
             <div className="flex items-center gap-1">
               <input
-                type="number"
-                min={5}
-                max={1440}
-                value={currentDuration || ''}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={estimateInputStr}
                 onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  if (!isNaN(val) && val > 0) handleEstimateChange(val);
+                  const raw = e.target.value.replace(/[^0-9]/g, '');
+                  setEstimateInputStr(raw);
+                  if (raw !== '') {
+                    const val = parseInt(raw, 10);
+                    if (!isNaN(val) && val >= 5 && val <= 1440) {
+                      const updated = updateEstimateDuration(startMinutes, val);
+                      setStartMinutes(updated.startMinutes);
+                      setEndMinutes(updated.endMinutes);
+                      setCurrentDuration(updated.durationMinutes);
+                      onChange(formatTimeSlot(updated.startMinutes, updated.endMinutes), updated.durationMinutes);
+                    }
+                  }
+                }}
+                onBlur={() => {
+                  const val = parseInt(estimateInputStr, 10);
+                  if (isNaN(val) || val < 5) {
+                    handleEstimateChange(5);
+                  } else if (val > 1440) {
+                    handleEstimateChange(1440);
+                  } else {
+                    handleEstimateChange(val);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
                 }}
                 className="w-16 bg-white/10 border border-white/40 text-white font-mono text-xs font-black px-1.5 py-0.5 text-center focus:outline-none focus:border-white focus:bg-white/20"
-                title="Type minutes directly"
+                title="Type minutes directly (e.g. 120)"
               />
               <span className="text-[10px] text-white/70 font-mono font-bold">m</span>
               <span className="text-[10px] text-white/50 font-mono">({formatDurationHuman(currentDuration)})</span>

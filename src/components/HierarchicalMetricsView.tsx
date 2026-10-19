@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { MonthLogRecord, WeekLogRecord, DayLogRecord, DayTaskLog } from '../types';
-import { formatMinutes, addTimeToHistoryDayTask } from '../data/historyStore';
+import {
+  formatMinutes,
+  addTimeToHistoryDayTask,
+  setHistoryDayTaskExactTime,
+} from '../data/historyStore';
 import { generateAsciiProgressBar, getTodayDateStr } from '../utils/ascii';
 import { sortDayTaskLogsByStartTime } from '../utils/taskSorting';
 
@@ -29,21 +33,31 @@ export function HierarchicalMetricsView({ history, onRefresh }: HierarchicalMetr
 
   // Time logging modal state for specific day tasks
   const [logModalTarget, setLogModalTarget] = useState<{ date: string; task: DayTaskLog } | null>(null);
-  const [customDeltaMinutes, setCustomDeltaMinutes] = useState<number>(30);
+  const [modalTargetMinutes, setModalTargetMinutes] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const handleQuickAddTime = (targetDate: string, taskId: string, deltaMinutes: number) => {
     addTimeToHistoryDayTask(targetDate, taskId, deltaMinutes);
     onRefresh?.();
-    setToastMessage(`[TIME LOGGED] ${deltaMinutes > 0 ? `+${deltaMinutes}m` : `${deltaMinutes}m`} applied to day ${targetDate}`);
+    setToastMessage(`[TIME ADJUSTED] ${deltaMinutes > 0 ? `+${deltaMinutes}m` : `${deltaMinutes}m`} applied to day ${targetDate}`);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const handleOpenLogModal = (targetDate: string, task: DayTaskLog) => {
+    setLogModalTarget({ date: targetDate, task });
+    setModalTargetMinutes(task.timeSpentMinutes || 0);
+  };
+
   const handleCommitModalTime = () => {
-    if (!logModalTarget || !customDeltaMinutes) return;
-    addTimeToHistoryDayTask(logModalTarget.date, logModalTarget.task.taskId, customDeltaMinutes);
+    if (!logModalTarget) return;
+    const target = Math.max(0, modalTargetMinutes);
+    setHistoryDayTaskExactTime(logModalTarget.date, logModalTarget.task.taskId, target);
     onRefresh?.();
-    setToastMessage(`[TIME LOGGED] ${customDeltaMinutes > 0 ? `+${customDeltaMinutes}m` : `${customDeltaMinutes}m`} committed to "${logModalTarget.task.title}" on ${logModalTarget.date}`);
+    const diff = target - (logModalTarget.task.timeSpentMinutes || 0);
+    const diffStr = diff > 0 ? `+${diff}m` : diff < 0 ? `${diff}m` : '0m';
+    setToastMessage(
+      `[TIME COMMITTED] Set to ${formatMinutes(target)} (${diffStr}) for "${logModalTarget.task.title}" on ${logModalTarget.date}`
+    );
     setTimeout(() => setToastMessage(null), 3500);
     setLogModalTarget(null);
   };
@@ -647,6 +661,13 @@ export function HierarchicalMetricsView({ history, onRefresh }: HierarchicalMetr
 
                         <div className="flex items-center gap-1">
                           <button
+                            onClick={() => handleQuickAddTime(activeDay.date, task.taskId, -15)}
+                            className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
+                            title="Quick decrease 15 minutes from this task on this day"
+                          >
+                            -15m
+                          </button>
+                          <button
                             onClick={() => handleQuickAddTime(activeDay.date, task.taskId, 15)}
                             className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
                             title="Quick add 15 minutes to this task on this day"
@@ -654,21 +675,11 @@ export function HierarchicalMetricsView({ history, onRefresh }: HierarchicalMetr
                             +15m
                           </button>
                           <button
-                            onClick={() => handleQuickAddTime(activeDay.date, task.taskId, 30)}
-                            className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
-                            title="Quick add 30 minutes to this task on this day"
-                          >
-                            +30m
-                          </button>
-                          <button
-                            onClick={() => {
-                              setLogModalTarget({ date: activeDay.date, task });
-                              setCustomDeltaMinutes(30);
-                            }}
+                            onClick={() => handleOpenLogModal(activeDay.date, task)}
                             className="border border-white bg-white text-black px-2 py-0.5 text-[10px] font-bold uppercase hover:bg-white/80 cursor-pointer transition-none"
-                            title="Log or adjust tracked time for this specific day"
+                            title="Directly edit or adjust tracked time for this specific day"
                           >
-                            [+ LOG / ADJUST TIME]
+                            [ADJUST TIME]
                           </button>
                         </div>
                       </div>
@@ -682,87 +693,104 @@ export function HierarchicalMetricsView({ history, onRefresh }: HierarchicalMetr
       })()}
 
       {/* Log / Adjust Time Modal for Day Tasks */}
-      {logModalTarget && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="border-2 border-white bg-black max-w-md w-full p-5 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/20 pb-2">
-              <span className="text-sm font-bold text-white uppercase tracking-wider">
-                _LOG_TIME_TO_SPECIFIED_DAY
-              </span>
-              <button
-                onClick={() => setLogModalTarget(null)}
-                className="text-white hover:opacity-60 text-xs font-bold font-mono cursor-pointer"
-              >
-                [X CLOSE]
-              </button>
-            </div>
+      {logModalTarget && (() => {
+        const currentMins = logModalTarget.task.timeSpentMinutes || 0;
+        const diff = modalTargetMinutes - currentMins;
+        const hoursDecimal = (modalTargetMinutes / 60).toFixed(1);
 
-            <div className="space-y-2 text-xs">
-              <div className="bg-white/5 border border-white/20 p-3 space-y-1">
-                <div className="text-[10px] opacity-60 uppercase font-bold">TARGET DAY:</div>
-                <div className="text-white font-bold text-sm">{logModalTarget.date}</div>
-                <div className="text-[10px] opacity-60 uppercase font-bold mt-2">TASK:</div>
-                <div className="text-white font-bold text-sm">{logModalTarget.task.title}</div>
-                <div className="text-[11px] opacity-70">
-                  Current Time Logged: <strong>{formatMinutes(logModalTarget.task.timeSpentMinutes)}</strong>
+        return (
+          <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50">
+            <div className="border-2 border-white bg-black max-w-md w-full p-5 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                <span className="text-sm font-bold text-white uppercase tracking-wider">
+                  _EDIT_TIME // {logModalTarget.date}
+                </span>
+                <button
+                  onClick={() => setLogModalTarget(null)}
+                  className="text-white hover:opacity-60 text-xs font-bold font-mono cursor-pointer"
+                >
+                  [X CLOSE]
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="bg-white/5 border border-white/20 p-3 space-y-1">
+                  <div className="text-[10px] opacity-60 uppercase font-bold">TASK SPECIFICATION:</div>
+                  <div className="text-white font-bold text-base">{logModalTarget.task.title}</div>
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-white/10 mt-1">
+                    <span className="opacity-70">CURRENT TIME LOGGED:</span>
+                    <span className="font-bold text-white font-mono">{formatMinutes(currentMins)} ({(currentMins / 60).toFixed(1)} hrs)</span>
+                  </div>
+                </div>
+
+                {/* Direct Number Input */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] opacity-80 uppercase font-bold">
+                      NEW TARGET TOTAL (MINUTES):
+                    </label>
+                    <span className="text-xs font-mono font-bold text-white">
+                      = {formatMinutes(modalTargetMinutes)} ({hoursDecimal} hrs)
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    value={modalTargetMinutes}
+                    onChange={(e) => setModalTargetMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full bg-black border border-white/60 px-3 py-2 text-base text-white font-mono font-bold focus:border-white focus:outline-none"
+                    placeholder="e.g. 180"
+                  />
+                  <div className="flex items-center justify-between text-[11px] pt-0.5">
+                    <span className="opacity-60">Difference vs Current:</span>
+                    <span className={`font-mono font-bold ${
+                      diff > 0 ? 'text-green-400' : diff < 0 ? 'text-amber-400' : 'opacity-60'
+                    }`}>
+                      {diff > 0 ? `+${diff}m (+${(diff / 60).toFixed(1)}h)` : diff < 0 ? `${diff}m (${(diff / 60).toFixed(1)}h)` : '0m (no change)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Nudge Adjustment Buttons */}
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-[10px] opacity-70 uppercase font-bold block">
+                    QUICK ADJUST (+ / -):
+                  </label>
+                  <div className="grid grid-cols-6 gap-1">
+                    {[-60, -30, -15, 15, 30, 60].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setModalTargetMinutes((prev) => Math.max(0, prev + mins))}
+                        className="py-1 text-xs border border-white/40 hover:border-white hover:bg-white hover:text-black font-mono font-bold transition-none cursor-pointer text-white"
+                      >
+                        {mins > 0 ? `+${mins}m` : `${mins}m`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-1.5 pt-2">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  SELECT MINUTES TO ADD (OR ENTER CUSTOM):
-                </label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {[15, 30, 45, 60, 90, 120, -15, -30].map((mins) => (
-                    <button
-                      key={mins}
-                      type="button"
-                      onClick={() => setCustomDeltaMinutes(mins)}
-                      className={`py-1 text-xs border font-mono font-bold transition-none cursor-pointer ${
-                        customDeltaMinutes === mins
-                          ? 'bg-white text-black border-white'
-                          : 'border-white/30 text-white hover:border-white'
-                      }`}
-                    >
-                      {mins > 0 ? `+${mins}m` : `${mins}m`}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/20">
+                <button
+                  type="button"
+                  onClick={() => setLogModalTarget(null)}
+                  className="border border-white/40 px-3 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+                >
+                  CANCEL
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCommitModalTime}
+                  className="border border-white bg-white text-black px-4 py-1 text-xs font-bold hover:bg-white/90 transition-none cursor-pointer uppercase font-mono"
+                >
+                  COMMIT TIME ({formatMinutes(modalTargetMinutes)})
+                </button>
               </div>
-
-              <div className="space-y-1 pt-1">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  CUSTOM MINUTES:
-                </label>
-                <input
-                  type="number"
-                  value={customDeltaMinutes}
-                  onChange={(e) => setCustomDeltaMinutes(parseInt(e.target.value) || 0)}
-                  className="w-full bg-black border border-white/40 px-3 py-1.5 text-sm text-white font-mono focus:border-white focus:outline-none"
-                  placeholder="e.g. 45"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/20">
-              <button
-                type="button"
-                onClick={() => setLogModalTarget(null)}
-                className="border border-white/40 px-3 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
-              >
-                CANCEL
-              </button>
-              <button
-                type="button"
-                onClick={handleCommitModalTime}
-                className="border border-white bg-white text-black px-4 py-1 text-xs font-bold hover:bg-white/90 transition-none cursor-pointer uppercase"
-              >
-                COMMIT TIME LOG ({customDeltaMinutes > 0 ? `+${customDeltaMinutes}m` : `${customDeltaMinutes}m`})
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Confirmation Toast */}
       {toastMessage && (

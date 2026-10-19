@@ -143,6 +143,8 @@ const STORAGE_CUSTOM_SCHEDULES_KEY = 'prod_sys_custom_schedules_v1';
 const STORAGE_HIERARCHY_HISTORY_KEY = 'prod_sys_hierarchy_history_v1';
 const STORAGE_COMPLETED_TODAY_KEY = 'prod_sys_completed_today_v1';
 const STORAGE_TASK_TIME_TRACKING_KEY = 'prod_sys_task_time_tracking_v1';
+const STORAGE_DIRECT_TASK_AUDIT_KEY = 'alt_routine_direct_task_audit_time_v1';
+const STORAGE_DIRECT_TASK_TITLES_KEY = 'alt_routine_direct_task_audit_titles_v1';
 
 // Format helper
 export function formatMinutes(mins: number): string {
@@ -456,7 +458,7 @@ export function purgeAllDataAndStartClean(): {
   saveSchedules(cleanSchedules);
   saveHierarchyHistory([]);
 
-  // Clear all completed checkboxes and day logs from localStorage
+  // Clear all completed checkboxes, date tracked time maps, direct audit time, and history from localStorage
   try {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -464,14 +466,20 @@ export function purgeAllDataAndStartClean(): {
       if (
         key &&
         (key.startsWith('alt_routine_completed_') ||
+          key.startsWith('alt_routine_time_spent_date_') ||
           key.startsWith('prod_sys_completed_') ||
           key.startsWith('prod_sys_task_time_') ||
-          key === 'alt_routine_hierarchy_history_v1')
+          key === STORAGE_DIRECT_TASK_AUDIT_KEY ||
+          key === STORAGE_DIRECT_TASK_TITLES_KEY ||
+          key === 'alt_routine_hierarchy_history_v1' ||
+          key === 'alt_routine_schedules_v1')
       ) {
         keysToRemove.push(key);
       }
     }
     keysToRemove.forEach((k) => localStorage.removeItem(k));
+    localStorage.removeItem(STORAGE_DIRECT_TASK_AUDIT_KEY);
+    localStorage.removeItem(STORAGE_DIRECT_TASK_TITLES_KEY);
     localStorage.setItem('prod_sys_data_cleaned_v1', 'true');
     localStorage.setItem('routine_tracker_clean_slate_active_v1', 'true');
   } catch {
@@ -839,6 +847,56 @@ export function addTimeToHistoryDayTask(
 }
 
 /**
+ * Sets the exact tracked time for a specific day task in the hierarchical store.
+ * Directly updates the task's timeSpentMinutes, rebalances day/week/month totals, and saves.
+ */
+export function setHistoryDayTaskExactTime(
+  dateStr: string,
+  taskIdOrTitle: string,
+  exactMinutes: number,
+  markCompleted?: boolean
+): void {
+  const history = loadHierarchyHistory();
+  const weekInfo = getWeekInfoForDate(dateStr);
+  const [yearStr, monthStr] = dateStr.split('-');
+  const monthKey = `${yearStr}-${monthStr}`;
+
+  let month = history.find((m) => m.monthKey === monthKey);
+  if (!month) return;
+  let week = month.weeks.find((w) => w.weekId === weekInfo.weekId);
+  if (!week) return;
+  let day = week.days.find((d) => d.date === dateStr);
+  if (!day) return;
+
+  const normalizedSearch = taskIdOrTitle.trim().toLowerCase();
+  let task = day.tasks.find(
+    (t) => t.taskId === taskIdOrTitle || t.title.trim().toLowerCase() === normalizedSearch
+  );
+
+  const targetMinutes = Math.max(0, exactMinutes);
+  if (task) {
+    task.timeSpentMinutes = targetMinutes;
+    if (markCompleted !== undefined) {
+      task.completed = markCompleted;
+    }
+  }
+
+  day.tasks = sortDayTaskLogsByStartTime(day.tasks);
+  day.totalTimeMinutes = day.tasks.reduce((sum, t) => sum + (t.timeSpentMinutes || 0), 0);
+  day.completedCount = day.tasks.filter((t) => t.completed).length;
+  day.totalTasksCount = day.tasks.length;
+
+  const rebalanced = rebalanceAndSortHistory(history);
+  saveHierarchyHistory(rebalanced);
+
+  if (task) {
+    const timeMap = getDateTrackedTimeMap(dateStr);
+    timeMap[task.taskId] = task.timeSpentMinutes;
+    saveDateTrackedTimeMap(dateStr, timeMap);
+  }
+}
+
+/**
  * Purges all tasks with 0 hours / 0 tracked time that no longer exist in the active schedules
  * from the hierarchical history store.
  * Tasks with logged work (> 0 minutes or completed sessions) are strictly preserved.
@@ -885,10 +943,7 @@ export function cleanZeroHourTasksFromHistory(
   return rebalanced;
 }
 
-// Storage key for direct task audit adjustments (logged WITHOUT specifying any day)
-const STORAGE_DIRECT_TASK_AUDIT_KEY = 'alt_routine_direct_task_audit_time_v1';
-const STORAGE_DIRECT_TASK_TITLES_KEY = 'alt_routine_direct_task_audit_titles_v1';
-
+// Storage functions for direct task audit adjustments (logged WITHOUT specifying any day)
 export function getDirectTaskAuditMap(): Record<string, number> {
   try {
     const raw = localStorage.getItem(STORAGE_DIRECT_TASK_AUDIT_KEY);
@@ -949,6 +1004,84 @@ export function addDirectTimeToTaskAudit(
     category: category || titlesMap[key]?.category || 'custom',
   };
   saveDirectTaskTitlesMap(titlesMap);
+}
+
+/**
+ * Adjusts task time in the audit engine by a positive or negative delta:
+ * 1. If delta > 0: adds directly to `alt_routine_direct_task_audit_time_v1`.
+ * 2. If delta < 0:
+ *    - First deducts from `alt_routine_direct_task_audit_time_v1` (if any direct minutes exist).
+ *    - If delta is still negative, deducts remaining minutes from the latest day(s) in `history`
+ *      where this task has logged time.
+ *    - Rebalances and saves updated history.
+ */
+export function adjustTaskAuditTime(
+  taskTitle: string,
+  deltaMinutes: number,
+  category?: TaskCategory
+): void {
+  const key = taskTitle.trim().toLowerCase();
+  const directMap = getDirectTaskAuditMap();
+  const titlesMap = getDirectTaskTitlesMap();
+
+  titlesMap[key] = {
+    title: taskTitle.trim(),
+    category: category || titlesMap[key]?.category || 'custom',
+  };
+  saveDirectTaskTitlesMap(titlesMap);
+
+  if (deltaMinutes > 0) {
+    directMap[key] = (directMap[key] || 0) + deltaMinutes;
+    saveDirectTaskAuditMap(directMap);
+    return;
+  }
+
+  if (deltaMinutes < 0) {
+    let toDeduct = Math.abs(deltaMinutes);
+    const directVal = directMap[key] || 0;
+    if (directVal > 0) {
+      const fromDirect = Math.min(directVal, toDeduct);
+      const remainingDirect = directVal - fromDirect;
+      if (remainingDirect === 0) {
+        delete directMap[key];
+      } else {
+        directMap[key] = remainingDirect;
+      }
+      saveDirectTaskAuditMap(directMap);
+      toDeduct -= fromDirect;
+    }
+
+    if (toDeduct > 0) {
+      // Deduct remaining from the most recent day(s) in history
+      const history = loadHierarchyHistory();
+      let changed = false;
+
+      // Scan months from newest to oldest
+      for (let m = history.length - 1; m >= 0 && toDeduct > 0; m--) {
+        const month = history[m];
+        for (let w = (month.weeks?.length || 0) - 1; w >= 0 && toDeduct > 0; w--) {
+          const week = month.weeks[w];
+          for (let d = (week.days?.length || 0) - 1; d >= 0 && toDeduct > 0; d--) {
+            const day = week.days[d];
+            for (const t of day.tasks || []) {
+              if (t.title.trim().toLowerCase() === key && (t.timeSpentMinutes || 0) > 0) {
+                const deduction = Math.min(t.timeSpentMinutes, toDeduct);
+                t.timeSpentMinutes -= deduction;
+                toDeduct -= deduction;
+                changed = true;
+                if (toDeduct <= 0) break;
+              }
+            }
+          }
+        }
+      }
+
+      if (changed) {
+        const rebalanced = rebalanceAndSortHistory(history);
+        saveHierarchyHistory(rebalanced);
+      }
+    }
+  }
 }
 
 // Compute per-task time calculation audit across all history, custom schedules, and direct audit entries

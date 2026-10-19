@@ -3,7 +3,7 @@ import { TaskTimeAuditItem, DaySchedule, MonthLogRecord, TaskCategory } from '..
 import {
   computeTaskTimeAudit,
   formatMinutes,
-  addDirectTimeToTaskAudit,
+  adjustTaskAuditTime,
   removeTaskFromAudit,
 } from '../data/historyStore';
 import { generateAsciiProgressBar } from '../utils/ascii';
@@ -27,11 +27,12 @@ export function TaskTimeAuditView({
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [localVersion, setLocalVersion] = useState<number>(0);
 
-  // Direct Time Logging Modal State
+  // Direct Time Logging / Editing Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [modalTaskTitle, setModalTaskTitle] = useState<string>('');
   const [modalCategory, setModalCategory] = useState<TaskCategory>('custom');
-  const [modalMinutes, setModalMinutes] = useState<number>(30);
+  const [modalTargetMinutes, setModalTargetMinutes] = useState<number>(30);
+  const [modalOriginalMinutes, setModalOriginalMinutes] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Task Removal / Purge Modal State
@@ -78,30 +79,43 @@ export function TaskTimeAuditView({
       });
   }, [allAuditItems, selectedCategory, searchQuery, sortBy]);
 
-  const handleQuickDirectAdd = (title: string, category: TaskCategory, minutes: number) => {
-    addDirectTimeToTaskAudit(title, minutes, category);
+  const handleQuickDirectAdjust = (title: string, category: TaskCategory, deltaMinutes: number) => {
+    adjustTaskAuditTime(title, deltaMinutes, category);
     setLocalVersion((v) => v + 1);
     onRefresh?.();
-    setToastMessage(`[DIRECT TIME AUDITED] ${minutes > 0 ? `+${minutes}m` : `${minutes}m`} added to "${title}"`);
+    setToastMessage(`[TIME ADJUSTED] ${deltaMinutes > 0 ? `+${deltaMinutes}m` : `${deltaMinutes}m`} applied to "${title}"`);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleOpenAddModal = (initialTitle: string = '', initialCategory: TaskCategory = 'custom') => {
     setModalTaskTitle(initialTitle);
     setModalCategory(initialCategory);
-    setModalMinutes(30);
+    const existing = allAuditItems.find(
+      (it) => it.title.trim().toLowerCase() === initialTitle.trim().toLowerCase()
+    );
+    const existingMinutes = existing?.totalTimeMinutes || 0;
+    setModalOriginalMinutes(existingMinutes);
+    setModalTargetMinutes(existingMinutes > 0 ? existingMinutes : 30);
     setIsModalOpen(true);
   };
 
   const handleCommitDirectTime = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalTaskTitle.trim() || modalMinutes === 0) return;
+    if (!modalTaskTitle.trim()) return;
 
-    addDirectTimeToTaskAudit(modalTaskTitle.trim(), modalMinutes, modalCategory);
-    setLocalVersion((v) => v + 1);
-    onRefresh?.();
-    setToastMessage(`[DIRECT TIME AUDITED] ${modalMinutes > 0 ? `+${modalMinutes}m` : `${modalMinutes}m`} added to "${modalTaskTitle.trim()}"`);
-    setTimeout(() => setToastMessage(null), 3500);
+    const targetMins = Math.max(0, modalTargetMinutes);
+    const delta = targetMins - modalOriginalMinutes;
+
+    if (delta !== 0) {
+      adjustTaskAuditTime(modalTaskTitle.trim(), delta, modalCategory);
+      setLocalVersion((v) => v + 1);
+      onRefresh?.();
+      const diffStr = delta > 0 ? `+${delta}m` : `${delta}m`;
+      setToastMessage(
+        `[TIME COMMITTED] Set to ${formatMinutes(targetMins)} (${diffStr}) for "${modalTaskTitle.trim()}"`
+      );
+      setTimeout(() => setToastMessage(null), 3500);
+    }
     setIsModalOpen(false);
   };
 
@@ -342,28 +356,28 @@ export function TaskTimeAuditView({
                     </div>
                   </div>
 
-                  {/* Direct Add Time Actions without Day */}
+                  {/* Direct Add / Edit Time Actions */}
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => handleQuickDirectAdd(task.title, task.category, 15)}
+                      onClick={() => handleQuickDirectAdjust(task.title, task.category, -15)}
                       className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
-                      title="Directly add 15 minutes to this task"
+                      title="Quick decrease 15 minutes from this task"
+                    >
+                      -15m
+                    </button>
+                    <button
+                      onClick={() => handleQuickDirectAdjust(task.title, task.category, 15)}
+                      className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
+                      title="Quick add 15 minutes to this task"
                     >
                       +15m
                     </button>
                     <button
-                      onClick={() => handleQuickDirectAdd(task.title, task.category, 30)}
-                      className="border border-white/40 px-1.5 py-0.5 text-[10px] text-white hover:bg-white hover:text-black font-bold cursor-pointer transition-none"
-                      title="Directly add 30 minutes to this task"
-                    >
-                      +30m
-                    </button>
-                    <button
                       onClick={() => handleOpenAddModal(task.title, task.category)}
                       className="border border-white bg-white text-black px-2.5 py-0.5 text-[10px] font-bold uppercase hover:bg-white/80 cursor-pointer transition-none"
-                      title="Add direct time to this task without specifying any day"
+                      title="Directly edit or adjust total audited time for this task"
                     >
-                      [+ ADD TIME]
+                      [ADJUST TIME]
                     </button>
                     <button
                       onClick={() => handleOpenRemoveModal(task)}
@@ -380,117 +394,150 @@ export function TaskTimeAuditView({
         )}
       </div>
 
-      {/* Direct Add Time Modal (Without specifying any day) */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="border-2 border-white bg-black max-w-md w-full p-5 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/20 pb-2">
-              <span className="text-sm font-bold text-white uppercase tracking-wider">
-                _DIRECT_TASK_TIME_AUDIT // NO_DAY_BINDING
-              </span>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="text-white hover:opacity-60 text-xs font-bold font-mono cursor-pointer"
-              >
-                [X CLOSE]
-              </button>
-            </div>
+      {/* Direct Add / Edit Time Modal */}
+      {isModalOpen && (() => {
+        const diff = modalTargetMinutes - modalOriginalMinutes;
+        const hoursDecimal = (modalTargetMinutes / 60).toFixed(1);
 
-            <form onSubmit={handleCommitDirectTime} className="space-y-3 text-xs">
-              <div className="space-y-1">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  TASK TITLE / SPECIFICATION:
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={modalTaskTitle}
-                  onChange={(e) => setModalTaskTitle(e.target.value)}
-                  list="known-tasks-datalist"
-                  className="w-full bg-black border border-white/40 px-3 py-1.5 text-sm text-white font-mono focus:border-white focus:outline-none"
-                  placeholder="e.g. Deep Research, Math Practice..."
-                />
-                <datalist id="known-tasks-datalist">
-                  {allAuditItems.map((item) => (
-                    <option key={item.taskId} value={item.title} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  CATEGORY:
-                </label>
-                <select
-                  value={modalCategory}
-                  onChange={(e) => setModalCategory(e.target.value as TaskCategory)}
-                  className="w-full bg-black border border-white/40 px-2 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
-                >
-                  <option value="deep_work">DEEP WORK</option>
-                  <option value="core_work">CORE WORK</option>
-                  <option value="fitness">FITNESS / HEALTH</option>
-                  <option value="learning">LEARNING / ACADEMIC</option>
-                  <option value="creative">CREATIVE / EXPLORATION</option>
-                  <option value="life_ops">LIFE OPERATIONS</option>
-                  <option value="custom">CUSTOM</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5 pt-1">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  MINUTES TO ACCUMULATE (OR ENTER CUSTOM):
-                </label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {[15, 30, 45, 60, 90, 120, 180, 240].map((mins) => (
-                    <button
-                      key={mins}
-                      type="button"
-                      onClick={() => setModalMinutes(mins)}
-                      className={`py-1 text-xs border font-mono font-bold transition-none cursor-pointer ${
-                        modalMinutes === mins
-                          ? 'bg-white text-black border-white'
-                          : 'border-white/30 text-white hover:border-white'
-                      }`}
-                    >
-                      +{mins}m
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1 pt-1">
-                <label className="text-[10px] opacity-70 uppercase font-bold block">
-                  CUSTOM MINUTES:
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={modalMinutes}
-                  onChange={(e) => setModalMinutes(parseInt(e.target.value) || 0)}
-                  className="w-full bg-black border border-white/40 px-3 py-1.5 text-sm text-white font-mono focus:border-white focus:outline-none"
-                  placeholder="e.g. 75"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/20">
+        return (
+          <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50">
+            <div className="border-2 border-white bg-black max-w-md w-full p-5 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                <span className="text-sm font-bold text-white uppercase tracking-wider">
+                  _EDIT_TASK_TIME // AUDIT_TOTAL
+                </span>
                 <button
-                  type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="border border-white/40 px-3 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+                  className="text-white hover:opacity-60 text-xs font-bold font-mono cursor-pointer"
                 >
-                  CANCEL
-                </button>
-                <button
-                  type="submit"
-                  className="border border-white bg-white text-black px-4 py-1 text-xs font-bold hover:bg-white/90 transition-none cursor-pointer uppercase"
-                >
-                  CONFIRM &amp; ACCUMULATE (+{modalMinutes}m)
+                  [X CLOSE]
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleCommitDirectTime} className="space-y-3 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] opacity-70 uppercase font-bold block">
+                    TASK TITLE / SPECIFICATION:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={modalTaskTitle}
+                    onChange={(e) => {
+                      const newTitle = e.target.value;
+                      setModalTaskTitle(newTitle);
+                      const existing = allAuditItems.find(
+                        (it) => it.title.trim().toLowerCase() === newTitle.trim().toLowerCase()
+                      );
+                      if (existing) {
+                        setModalOriginalMinutes(existing.totalTimeMinutes);
+                        setModalCategory(existing.category);
+                      }
+                    }}
+                    list="known-tasks-datalist"
+                    className="w-full bg-black border border-white/40 px-3 py-1.5 text-sm text-white font-mono focus:border-white focus:outline-none"
+                    placeholder="e.g. Deep Research, Math Practice..."
+                  />
+                  <datalist id="known-tasks-datalist">
+                    {allAuditItems.map((item) => (
+                      <option key={item.taskId} value={item.title} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="flex items-center justify-between bg-white/5 border border-white/20 p-2 text-xs">
+                  <span className="opacity-70">CURRENT TIME LOGGED:</span>
+                  <span className="font-bold text-white font-mono">
+                    {formatMinutes(modalOriginalMinutes)} ({(modalOriginalMinutes / 60).toFixed(1)} hrs)
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] opacity-70 uppercase font-bold block">
+                    CATEGORY:
+                  </label>
+                  <select
+                    value={modalCategory}
+                    onChange={(e) => setModalCategory(e.target.value as TaskCategory)}
+                    className="w-full bg-black border border-white/40 px-2 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
+                  >
+                    <option value="deep_work">DEEP WORK</option>
+                    <option value="core_work">CORE WORK</option>
+                    <option value="fitness">FITNESS / HEALTH</option>
+                    <option value="learning">LEARNING / ACADEMIC</option>
+                    <option value="creative">CREATIVE / EXPLORATION</option>
+                    <option value="life_ops">LIFE OPERATIONS</option>
+                    <option value="custom">CUSTOM</option>
+                  </select>
+                </div>
+
+                {/* Direct Number Input */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] opacity-80 uppercase font-bold">
+                      NEW TARGET TOTAL (MINUTES):
+                    </label>
+                    <span className="text-xs font-mono font-bold text-white">
+                      = {formatMinutes(modalTargetMinutes)} ({hoursDecimal} hrs)
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    value={modalTargetMinutes}
+                    onChange={(e) => setModalTargetMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full bg-black border border-white/60 px-3 py-2 text-base text-white font-mono font-bold focus:border-white focus:outline-none"
+                    placeholder="e.g. 180"
+                  />
+                  <div className="flex items-center justify-between text-[11px] pt-0.5">
+                    <span className="opacity-60">Difference vs Current:</span>
+                    <span className={`font-mono font-bold ${
+                      diff > 0 ? 'text-green-400' : diff < 0 ? 'text-amber-400' : 'opacity-60'
+                    }`}>
+                      {diff > 0 ? `+${diff}m (+${(diff / 60).toFixed(1)}h)` : diff < 0 ? `${diff}m (${(diff / 60).toFixed(1)}h)` : '0m (no change)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Nudge Adjustment Buttons */}
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-[10px] opacity-70 uppercase font-bold block">
+                    QUICK ADJUST (+ / -):
+                  </label>
+                  <div className="grid grid-cols-6 gap-1">
+                    {[-60, -30, -15, 15, 30, 60].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setModalTargetMinutes((prev) => Math.max(0, prev + mins))}
+                        className="py-1 text-xs border border-white/40 hover:border-white hover:bg-white hover:text-black font-mono font-bold transition-none cursor-pointer text-white"
+                      >
+                        {mins > 0 ? `+${mins}m` : `${mins}m`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/20">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="border border-white/40 px-3 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="submit"
+                    className="border border-white bg-white text-black px-4 py-1 text-xs font-bold hover:bg-white/90 transition-none cursor-pointer uppercase font-mono"
+                  >
+                    COMMIT TIME ({formatMinutes(modalTargetMinutes)})
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Purge / Remove Task Confirmation Modal */}
       {taskPendingRemoval && (
