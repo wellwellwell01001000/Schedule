@@ -135,3 +135,20 @@ export function parseTimeSlotRange(
 
   return null;
 }
+
+/**
+ * Determines whether a task is active on a specific calendar date (YYYY-MM-DD).
+ * - If a task is a one-time task (has oneTimeDate set or isRepetitive === false):
+ *   it is ONLY active when dateStr strictly matches oneTimeDate.
+ * - If a task is repetitive (isRepetitive !== false and no oneTimeDate):
+ *   it repeats on its scheduled day every week.
+ */
+export function isTaskActiveForDate(task: TaskItem, dateStr: string): boolean {
+  if (task.oneTimeDate) {
+    return task.oneTimeDate === dateStr;
+  }
+  if (task.isRepetitive === false) {
+    return false;
+  }
+  return true;
+}

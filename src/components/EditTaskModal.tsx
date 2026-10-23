@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TaskItem, TaskCategory, DayKey, DaySchedule } from '../types';
 import { findRoutineMatches, TaskDayMatch } from '../utils/taskRecurrence';
+import { getDateForDayKey } from '../utils/ascii';
 import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
 
 interface EditTaskModalProps {
@@ -72,6 +73,7 @@ export function EditTaskModal({
       details: details.trim(),
       isRepetitive,
       isScheduled,
+      oneTimeDate: isRepetitive ? undefined : (task.oneTimeDate || getDateForDayKey(currentDayKey)),
     };
 
     onSave(updatedFields, scope, isRepetitive ? repeatDays : [currentDayKey]);

@@ -23,7 +23,7 @@ import {
   applyTaskEdit,
   TaskDayMatch,
 } from '../utils/taskRecurrence';
-import { sortTasksByStartTime, parseTimeSlotRange } from '../utils/taskSorting';
+import { sortTasksByStartTime, parseTimeSlotRange, isTaskActiveForDate } from '../utils/taskSorting';
 import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionModal';
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
@@ -72,6 +72,11 @@ export function TrackerView({
   const selectedDateStr = useMemo(() => {
     return getDateForDayKey(selectedDay, baseDate);
   }, [selectedDay, baseDate]);
+
+  // Tasks strictly active on this specific calendar date (filters out one-time tasks from other dates)
+  const activeDayTasks = useMemo(() => {
+    return (currentSchedule.tasks || []).filter((t) => isTaskActiveForDate(t, selectedDateStr));
+  }, [currentSchedule.tasks, selectedDateStr]);
 
   const weekStartStr = useMemo(() => getDateForDayKey('mon', baseDate), [baseDate]);
   const weekEndStr = useMemo(() => getDateForDayKey('sun', baseDate), [baseDate]);
@@ -178,7 +183,7 @@ export function TrackerView({
     setLocalLastModified();
 
     // Map tasks with date-scoped time spent for syncing to history
-    const tasksWithDateTrackedTime = currentSchedule.tasks.map((t) => ({
+    const tasksWithDateTrackedTime = activeDayTasks.map((t) => ({
       ...t,
       timeSpentMinutes: dateTrackedTimeMap[t.id] || 0,
     }));
@@ -336,7 +341,7 @@ export function TrackerView({
     setLocalLastModified();
 
     // Attach updated date-scoped time spent for syncing to history
-    const tasksWithDateTrackedTime = currentSchedule.tasks.map((t) => ({
+    const tasksWithDateTrackedTime = activeDayTasks.map((t) => ({
       ...t,
       timeSpentMinutes: updatedMap[t.id] || 0,
     }));
@@ -443,7 +448,7 @@ export function TrackerView({
       isRepetitive: newIsRepetitive,
       repeatDays: newIsRepetitive ? newRepeatDays : [selectedDay as DayKey],
       isCustom: true,
-      oneTimeDate: newIsRepetitive ? undefined : getDateForDayKey(selectedDay),
+      oneTimeDate: newIsRepetitive ? undefined : selectedDateStr,
     };
 
     const targetDays = newIsRepetitive ? newRepeatDays : [selectedDay as DayKey];
@@ -459,7 +464,10 @@ export function TrackerView({
     }
 
     onUpdateSchedules(updatedSchedules);
-    syncDayActionToHistory(getDateForDayKey(selectedDay), selectedDay as DayKey, updatedSchedules[selectedDay].tasks, completedTaskIds);
+    const dayTasks = (updatedSchedules[selectedDay]?.tasks || []).filter((t) =>
+      isTaskActiveForDate(t, selectedDateStr)
+    );
+    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, dayTasks, completedTaskIds);
     onRefreshHistory();
 
     // Reset form
@@ -468,9 +476,9 @@ export function TrackerView({
     setIsAddingTask(false);
   };
 
-  // Scheduled tasks count vs total - strictly sorted by start time
-  const scheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled !== false));
-  const descheduledTasks = sortTasksByStartTime(currentSchedule.tasks.filter((t) => t.isScheduled === false));
+  // Scheduled tasks count vs total - strictly sorted by start time for this specific day and date
+  const scheduledTasks = sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled !== false));
+  const descheduledTasks = sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled === false));
   const completedCount = scheduledTasks.filter((t) => completedTaskIds.includes(t.id)).length;
   const totalTasks = scheduledTasks.length;
   const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
@@ -572,15 +580,22 @@ export function TrackerView({
   ];
 
   const totalTasksInCycle = useMemo(() => {
-    return Object.values(schedules).reduce((sum, s) => sum + (s.tasks?.length || 0), 0);
-  }, [schedules]);
+    return Object.entries(schedules).reduce((sum, [dKey, s]) => {
+      const dayDate = getDateForDayKey(dKey, baseDate);
+      const active = (s.tasks || []).filter((t) => isTaskActiveForDate(t, dayDate));
+      return sum + active.length;
+    }, 0);
+  }, [schedules, baseDate]);
 
   const activeTasksInCycle = useMemo(() => {
-    return Object.values(schedules).reduce(
-      (sum, s) => sum + (s.tasks?.filter((t) => t.isScheduled !== false).length || 0),
-      0
-    );
-  }, [schedules]);
+    return Object.entries(schedules).reduce((sum, [dKey, s]) => {
+      const dayDate = getDateForDayKey(dKey, baseDate);
+      const active = (s.tasks || []).filter(
+        (t) => isTaskActiveForDate(t, dayDate) && t.isScheduled !== false
+      );
+      return sum + active.length;
+    }, 0);
+  }, [schedules, baseDate]);
 
   const parkedTasksInCycle = totalTasksInCycle - activeTasksInCycle;
 
@@ -1283,8 +1298,8 @@ export function TrackerView({
                                   RECURRING ({matches.length}D)
                                 </span>
                               ) : (
-                                <span className="text-[10px] uppercase opacity-50">
-                                  {task.isRepetitive ? '[REPETITIVE]' : '[ONE-TIME]'}
+                                <span className="text-[10px] uppercase opacity-60 font-mono">
+                                  {task.oneTimeDate ? `[ONE-TIME: ${task.oneTimeDate}]` : task.isRepetitive === false ? '[ONE-TIME]' : '[REPETITIVE]'}
                                 </span>
                               )}
 
