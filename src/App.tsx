@@ -217,53 +217,63 @@ export default function App() {
   // Keyboard shortcut listener for terminal-style navigation and global actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Avoid intercepting when user is typing inside an input or textarea
       const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
-        if (e.key === 'Escape') {
-          target.blur();
-        }
-        return;
-      }
+      const isInput = target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
 
       const shortcuts = getCustomShortcuts();
 
-      // If Settings is open: only ESC or open_settings key closes it
+      // Universal ESC Key Handler: Blurs input and closes any active modal
+      if (e.key === 'Escape') {
+        if (isInput) {
+          target.blur();
+        }
+        e.preventDefault();
+
+        if (isSettingsOpen) { setIsSettingsOpen(false); return; }
+        if (isSyncChoiceOpen) { setIsSyncChoiceOpen(false); return; }
+        if (isShortcutsOpen) { setIsShortcutsOpen(false); return; }
+        if (isBulkIngestOpen) { setIsBulkIngestOpen(false); return; }
+        if (isTemplatesOpen) { setIsTemplatesOpen(false); return; }
+        if (isBackupOpen) { setIsBackupOpen(false); return; }
+        if (isCategoryManagerOpen) { setIsCategoryManagerOpen(false); return; }
+        if (isTutorialOpen) { setIsTutorialOpen(false); return; }
+        return;
+      }
+
+      // Ignore other hotkeys when user is actively typing inside an input element
+      if (isInput) {
+        return;
+      }
+
+      // If Settings is open: open_settings key closes it
       if (isSettingsOpen) {
-        if (isMatchingKey(e.key, shortcuts.open_settings) || e.key === 'Escape') {
+        if (isMatchingKey(e.key, shortcuts.open_settings)) {
           e.preventDefault();
           setIsSettingsOpen(false);
         }
         return;
       }
 
-      // If Sync Choice is open: only ESC or open_sync key closes it
+      // If Sync Choice is open: open_sync key closes it
       if (isSyncChoiceOpen) {
-        if (isMatchingKey(e.key, shortcuts.open_sync) || e.key === 'Escape') {
+        if (isMatchingKey(e.key, shortcuts.open_sync)) {
           e.preventDefault();
           setIsSyncChoiceOpen(false);
         }
         return;
       }
 
-      // If Cheatsheet is open: only ESC or open_shortcuts key closes it
+      // If Cheatsheet is open: open_shortcuts key closes it
       if (isShortcutsOpen) {
-        if (isMatchingKey(e.key, shortcuts.open_shortcuts) || e.key === '?' || e.key === 'Escape') {
+        if (isMatchingKey(e.key, shortcuts.open_shortcuts) || e.key === '?') {
           e.preventDefault();
           setIsShortcutsOpen(false);
         }
         return;
       }
 
-      // If any other modal is open: only ESC closes it
+      // If any other modal is open: return to avoid triggering background hotkeys
       if (isBulkIngestOpen || isTemplatesOpen || isBackupOpen || isCategoryManagerOpen || isTutorialOpen) {
-        if (e.key === 'Escape') {
-          setIsBulkIngestOpen(false);
-          setIsTemplatesOpen(false);
-          setIsBackupOpen(false);
-          setIsCategoryManagerOpen(false);
-          setIsTutorialOpen(false);
-        }
         return;
       }
 

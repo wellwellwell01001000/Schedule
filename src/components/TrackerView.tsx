@@ -643,10 +643,29 @@ export function TrackerView({
   // Keyboard shortcuts listener for Tracker View actions: Space (Timer), X (Done), L (+15m), R (Reset), N (New), / (Filter)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Handle Esc key when N task specification panel is open -> close panel!
-      if (isAddingTask && e.key === 'Escape') {
+      const target = e.target as HTMLElement | null;
+      const isInput = target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+
+      // Universal ESC Handler for Tracker View: Blurs active input and closes any open panel, modal, dropdown menu, or filter query
+      if (e.key === 'Escape') {
+        if (isInput) {
+          target.blur();
+        }
         e.preventDefault();
-        setIsAddingTask(false);
+
+        if (isAddingTask) { setIsAddingTask(false); return; }
+        if (isEditModalOpen) { setIsEditModalOpen(false); return; }
+        if (isConfirmRemoveAllOpen) { setIsConfirmRemoveAllOpen(false); return; }
+        if (isCycleActionsOpen) { setIsCycleActionsOpen(false); return; }
+        if (actionModalOpen) { setActionModalOpen(false); return; }
+        if (isManagerOpen) { setIsManagerOpen(false); return; }
+        if (timeEditTargetTask !== null) { setTimeEditTargetTask(null); return; }
+        if (filterQuery) { setFilterQuery(''); return; }
+        return;
+      }
+
+      // Do NOT process background shortcuts when user is typing inside an input element
+      if (isInput) {
         return;
       }
 
