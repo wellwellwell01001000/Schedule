@@ -8,6 +8,9 @@ import { SystemWalkthroughModal } from './components/SystemWalkthroughModal';
 import { RoutineTemplatesModal } from './components/RoutineTemplatesModal';
 import { SyncChoiceModal } from './components/SyncChoiceModal';
 import { BulkIngestModal } from './components/BulkIngestModal';
+import { SettingsModal } from './components/SettingsModal';
+import { CategoryManagerModal } from './components/CategoryManagerModal';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { RoutineTemplate } from './data/scheduleTemplates';
 import { getDayKeyFromDate } from './utils/ascii';
 import {
@@ -45,6 +48,9 @@ export default function App() {
   const [isTemplatesOpen, setIsTemplatesOpen] = useState<boolean>(false);
   const [isBulkIngestOpen, setIsBulkIngestOpen] = useState<boolean>(false);
   const [isSyncChoiceOpen, setIsSyncChoiceOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState<boolean>(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState<boolean>(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem('routine_tracker_tutorial_seen_v1') !== 'true';
@@ -197,21 +203,100 @@ export default function App() {
     setStoredSyncCode(newCode);
   };
 
-  // Keyboard shortcut listener for terminal-style navigation [1], [2], [3]
+  // Keyboard shortcut listener for terminal-style navigation and global actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Avoid intercepting when user is typing inside an input or textarea
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
         return;
       }
+
+      // K (or ?) : Cheat sheet overlay toggle
+      if (e.key === 'k' || e.key === 'K' || e.key === '?') {
+        e.preventDefault();
+        setIsShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      // If a major modal is currently open, don't execute background navigation shortcuts
+      if (
+        isSettingsOpen ||
+        isBulkIngestOpen ||
+        isShortcutsOpen ||
+        isSyncChoiceOpen ||
+        isTemplatesOpen ||
+        isBackupOpen ||
+        isCategoryManagerOpen ||
+        isTutorialOpen
+      ) {
+        return;
+      }
+
+      // [1], [2], [3] View Navigation
       if (e.key === '1') setActiveView('tracker');
       if (e.key === '2') setActiveView('hierarchy');
       if (e.key === '3') setActiveView('task_audit');
+
+      // T: Jump to Today
+      if (e.key === 't' || e.key === 'T') {
+        const todayKey = getDayKeyFromDate();
+        setSelectedDay(todayKey);
+        setSyncToast(`[JUMP TO TODAY]: Switched to ${todayKey.toUpperCase()}`);
+        setTimeout(() => setSyncToast(null), 3000);
+      }
+
+      // [ : Previous Day
+      if (e.key === '[') {
+        const DAYS_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+        const currentIdx = DAYS_ORDER.indexOf(selectedDay);
+        const prevIdx = (currentIdx - 1 + 7) % 7;
+        const newDay = DAYS_ORDER[prevIdx];
+        setSelectedDay(newDay);
+      }
+
+      // ] : Next Day
+      if (e.key === ']') {
+        const DAYS_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+        const currentIdx = DAYS_ORDER.indexOf(selectedDay);
+        const nextIdx = (currentIdx + 1) % 7;
+        const newDay = DAYS_ORDER[nextIdx];
+        setSelectedDay(newDay);
+      }
+
+      // S: Open Settings Console
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        setIsSettingsOpen(true);
+      }
+
+      // B: Bulk Ingest
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        setIsBulkIngestOpen(true);
+      }
+
+      // U: Open Cloud Sync Menu (Choose Pull or Push)
+      if (e.key === 'u' || e.key === 'U') {
+        e.preventDefault();
+        setIsSyncChoiceOpen(true);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [
+    selectedDay,
+    isSettingsOpen,
+    isBulkIngestOpen,
+    isShortcutsOpen,
+    isSyncChoiceOpen,
+    isTemplatesOpen,
+    isBackupOpen,
+    isCategoryManagerOpen,
+    isTutorialOpen,
+    handleUploadToCloud,
+  ]);
 
   return (
     <div className="min-h-screen bg-black text-white font-mono flex flex-col p-4 md:p-8 selection:bg-white selection:text-black">
@@ -223,10 +308,9 @@ export default function App() {
           selectedDay={selectedDay}
           setSelectedDay={setSelectedDay}
           schedules={schedules}
-          onOpenTemplates={() => setIsTemplatesOpen(true)}
-          onOpenBackup={() => setIsBackupOpen(true)}
-          onOpenTutorial={() => setIsTutorialOpen(true)}
           onOpenBulkIngest={() => setIsBulkIngestOpen(true)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsOpen(true)}
           onQuickDriveSync={() => setIsSyncChoiceOpen(true)}
           isSyncing={isQuickSyncing}
           syncCode={syncCode}
@@ -326,12 +410,45 @@ export default function App() {
           lastSyncTime={getVaultLastSync()}
         />
 
+        {/* Centered Tabbed System Settings Console */}
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          schedules={schedules}
+          history={history}
+          onApplyTemplate={handleApplyTemplate}
+          onRestoreSystem={handleRestoreSystem}
+          onPurgeAndStartClean={handlePurgeAndStartClean}
+          onRefreshHistory={handleRefreshHistory}
+          onOpenTutorial={() => {
+            setIsSettingsOpen(false);
+            setIsTutorialOpen(true);
+          }}
+        />
+
+        {/* Global Category Manager Modal */}
+        <CategoryManagerModal
+          isOpen={isCategoryManagerOpen}
+          onClose={() => setIsCategoryManagerOpen(false)}
+        />
+
+        {/* Keyboard Shortcuts Cheat Sheet Overlay Modal */}
+        <KeyboardShortcutsModal
+          isOpen={isShortcutsOpen}
+          onClose={() => setIsShortcutsOpen(false)}
+        />
+
         {/* Editorial Aesthetic Footer */}
         <footer className="mt-8 pt-4 border-t border-white flex flex-col md:flex-row justify-between items-start md:items-end text-[10px] tracking-widest opacity-80 gap-2">
           <div>USER: CS_3RD_YEAR_STUDENT // ROOT_ACCESS_GRANTED</div>
-          <div className="hidden sm:block">
-            KEYS: [1] TRACKER  [2] HIERARCHY  [3] TASK_AUDIT
-          </div>
+          <button
+            type="button"
+            onClick={() => setIsShortcutsOpen(true)}
+            className="hover:underline cursor-pointer text-left text-white/90"
+            title="Click to view all keyboard shortcuts (Hotkey: K)"
+          >
+            HOTKEYS: [1] TRACKER  [2] HIERARCHY  [3] TASK_AUDIT  [K] CHEAT_SHEET
+          </button>
           <div>LOC: 127.0.0.1 // DEV_ENV: METRICS_LOG_ENGINE</div>
           <div className="animate-pulse font-bold text-white">_ CMD: READY</div>
         </footer>

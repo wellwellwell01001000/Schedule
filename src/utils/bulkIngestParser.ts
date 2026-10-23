@@ -30,29 +30,11 @@ export function inferCategory(text: string): TaskCategory {
   if (/\b(workout|gym|lift|cardio|run|running|bench|squat|deadlift|push|pull|legs|stretch|training|zone 2|fitness|calisthenics)\b/.test(lower)) {
     return 'workout';
   }
-  if (/\b(ml|machine learning|pytorch|tensor|neural|deep learning|transformer|llm|dataset|weights|backprop|ai model|inference)\b/.test(lower)) {
-    return 'ml';
-  }
-  if (/\b(guitar|music|chords|fretboard|scales|riff|solo|bass|jamming|metronome|acoustic|electric guitar)\b/.test(lower)) {
-    return 'guitar';
-  }
-  if (/\b(cyber|security|ctf|reverse engineering|exploit|pentest|pwn|binary|wireshark|cryptography|vulnerability|firewall|auth token)\b/.test(lower)) {
-    return 'cyber';
-  }
-  if (/\b(game|gamedev|unity|unreal|godot|shader|blender|3d model|sprites|rigging|level design|game engine)\b/.test(lower)) {
-    return 'gamedev';
-  }
-  if (/\b(college|class|lecture|homework|assignment|exam|quiz|math|algebra|discrete|algorithms|cs\d+|professor|university|study)\b/.test(lower)) {
-    return 'college';
-  }
-  if (/\b(relax|break|dinner|lunch|breakfast|meal|coffee|tea|walk|nap|movie|chill|gaming|friends)\b/.test(lower)) {
+  if (/\b(relax|break|dinner|lunch|breakfast|meal|coffee|tea|walk|nap|movie|chill|gaming|friends|game|guitar|music)\b/.test(lower)) {
     return 'leisure';
   }
-  if (/\b(shower|sleep|wake|bedtime|meditation|cold shower|hygiene|routine|protocol|planning|recap|review|journal)\b/.test(lower)) {
-    return 'routine';
-  }
 
-  return 'custom';
+  return 'work';
 }
 
 /**

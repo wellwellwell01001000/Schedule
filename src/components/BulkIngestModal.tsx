@@ -3,6 +3,7 @@ import { DayKey, DaySchedule, TaskCategory } from '../types';
 import { parseBulkText, ParsedTaskDraft, convertDraftsToTaskItems } from '../utils/bulkIngestParser';
 import { sortTasksByStartTime } from '../utils/taskSorting';
 import { setLocalLastModified } from '../services/driveVaultService';
+import { getCategories, getCategoryLabel } from '../data/categoryStore';
 
 interface BulkIngestModalProps {
   isOpen: boolean;
@@ -21,18 +22,6 @@ const ALL_DAYS: { id: DayKey; label: string }[] = [
   { id: 'fri', label: 'FRI' },
   { id: 'sat', label: 'SAT' },
   { id: 'sun', label: 'SUN' },
-];
-
-const CATEGORIES: { id: TaskCategory; label: string }[] = [
-  { id: 'workout', label: 'WORKOUT' },
-  { id: 'cyber', label: 'CYBER' },
-  { id: 'ml', label: 'ML' },
-  { id: 'guitar', label: 'GUITAR' },
-  { id: 'gamedev', label: 'GAMEDEV' },
-  { id: 'college', label: 'COLLEGE' },
-  { id: 'leisure', label: 'LEISURE' },
-  { id: 'routine', label: 'ROUTINE' },
-  { id: 'custom', label: 'CUSTOM' },
 ];
 
 const EXAMPLE_BUFFER = `08:00 - 09:00 Morning Cold Shower & Protocol [daily]
@@ -221,9 +210,14 @@ export function BulkIngestModal({
                         onChange={(e) => handleChangeDraftCategory(idx, e.target.value as TaskCategory)}
                         className="bg-black border border-white/40 text-[10px] px-1 py-0.5 uppercase text-white font-bold cursor-pointer"
                       >
-                        {CATEGORIES.map((c) => (
+                        {!getCategories().some((c) => c.id === draft.category) && (
+                          <option value={draft.category}>
+                            [{getCategoryLabel(draft.category).toUpperCase()}]
+                          </option>
+                        )}
+                        {getCategories().map((c) => (
                           <option key={c.id} value={c.id}>
-                            [{c.label}]
+                            [{c.label.toUpperCase()}]
                           </option>
                         ))}
                       </select>

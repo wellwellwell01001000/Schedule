@@ -7,6 +7,9 @@ import {
   removeTaskFromAudit,
 } from '../data/historyStore';
 import { generateAsciiProgressBar } from '../utils/ascii';
+import { CategorySelect } from './CategorySelect';
+import { CategoryManagerModal } from './CategoryManagerModal';
+import { getCategories, getCategoryLabel } from '../data/categoryStore';
 
 interface TaskTimeAuditViewProps {
   schedules: Record<string, DaySchedule>;
@@ -30,9 +33,10 @@ export function TaskTimeAuditView({
   // Direct Time Logging / Editing Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [modalTaskTitle, setModalTaskTitle] = useState<string>('');
-  const [modalCategory, setModalCategory] = useState<TaskCategory>('custom');
+  const [modalCategory, setModalCategory] = useState<TaskCategory>('work');
   const [modalTargetMinutes, setModalTargetMinutes] = useState<number>(30);
   const [modalOriginalMinutes, setModalOriginalMinutes] = useState<number>(0);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Task Removal / Purge Modal State
@@ -57,11 +61,14 @@ export function TaskTimeAuditView({
   // Categories list
   const categories = useMemo(() => {
     const set = new Set<string>();
+    for (const c of getCategories()) {
+      set.add(c.id);
+    }
     for (const item of allAuditItems) {
       set.add(item.category);
     }
     return ['all', ...Array.from(set)];
-  }, [allAuditItems]);
+  }, [allAuditItems, localVersion]);
 
   // Filtered and sorted items
   const filteredItems = useMemo(() => {
@@ -87,7 +94,7 @@ export function TaskTimeAuditView({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const handleOpenAddModal = (initialTitle: string = '', initialCategory: TaskCategory = 'custom') => {
+  const handleOpenAddModal = (initialTitle: string = '', initialCategory: TaskCategory = 'work') => {
     setModalTaskTitle(initialTitle);
     setModalCategory(initialCategory);
     const existing = allAuditItems.find(
@@ -193,7 +200,7 @@ export function TaskTimeAuditView({
 
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => handleOpenAddModal('', 'custom')}
+                onClick={() => handleOpenAddModal('', 'work')}
                 className="border border-white bg-white text-black px-4 py-1.5 text-xs hover:bg-white/80 transition-none cursor-pointer font-bold uppercase tracking-wider"
               >
                 [+ ADD TIME TO TASK]
@@ -233,10 +240,18 @@ export function TaskTimeAuditView({
                 >
                   {categories.map((c) => (
                     <option key={c} value={c} className="bg-black text-white">
-                      {c.toUpperCase()}
+                      {c === 'all' ? 'ALL CATEGORIES' : getCategoryLabel(c).toUpperCase()}
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryManagerOpen(true)}
+                  className="border border-white/40 hover:border-white px-2 py-1 text-[10px] uppercase font-bold text-white hover:bg-white hover:text-black cursor-pointer transition-none ml-1"
+                  title="Manage categories"
+                >
+                  [MANAGE]
+                </button>
               </div>
             </div>
 
@@ -316,7 +331,7 @@ export function TaskTimeAuditView({
                       {task.title}
                     </span>
                     <span className="text-[10px] uppercase border border-white/40 px-1 py-0 opacity-80">
-                      {task.category}
+                      {getCategoryLabel(task.category)}
                     </span>
                     <span className="text-[10px] uppercase opacity-60">
                       {task.isRepetitive ? '[REPETITIVE]' : '[ONE-TIME]'}
@@ -456,19 +471,10 @@ export function TaskTimeAuditView({
                   <label className="text-[10px] opacity-70 uppercase font-bold block">
                     CATEGORY:
                   </label>
-                  <select
+                  <CategorySelect
                     value={modalCategory}
-                    onChange={(e) => setModalCategory(e.target.value as TaskCategory)}
-                    className="w-full bg-black border border-white/40 px-2 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
-                  >
-                    <option value="deep_work">DEEP WORK</option>
-                    <option value="core_work">CORE WORK</option>
-                    <option value="fitness">FITNESS / HEALTH</option>
-                    <option value="learning">LEARNING / ACADEMIC</option>
-                    <option value="creative">CREATIVE / EXPLORATION</option>
-                    <option value="life_ops">LIFE OPERATIONS</option>
-                    <option value="custom">CUSTOM</option>
-                  </select>
+                    onChange={(cat) => setModalCategory(cat as TaskCategory)}
+                  />
                 </div>
 
                 {/* Direct Number Input */}
@@ -623,6 +629,15 @@ export function TaskTimeAuditView({
           {toastMessage}
         </div>
       )}
+
+      {/* Category Manager Modal */}
+      <CategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => {
+          setIsCategoryManagerOpen(false);
+          setLocalVersion((v) => v + 1);
+        }}
+      />
     </div>
   );
 }

@@ -31,7 +31,8 @@ export function collectAllCompletedMap(): Record<string, string[]> {
           key.startsWith('alt_routine_completed_') ||
           key.startsWith('alt_routine_time_spent_date_') ||
           key === 'alt_routine_direct_task_audit_time_v1' ||
-          key === 'alt_routine_direct_task_audit_titles_v1')
+          key === 'alt_routine_direct_task_audit_titles_v1' ||
+          key === 'prod_sys_categories_v1')
       ) {
         const raw = localStorage.getItem(key);
         if (raw) {
@@ -49,9 +50,10 @@ export function collectAllCompletedMap(): Record<string, string[]> {
 export function restoreAllCompletedMap(map: Record<string, any>): void {
   for (const [key, data] of Object.entries(map)) {
     try {
-      const storageKey = key.startsWith('alt_routine_')
-        ? key
-        : `alt_routine_completed_${key}`;
+      const storageKey =
+        key.startsWith('alt_routine_') || key === 'prod_sys_categories_v1'
+          ? key
+          : `alt_routine_completed_${key}`;
       localStorage.setItem(storageKey, JSON.stringify(data));
     } catch {
       // ignore

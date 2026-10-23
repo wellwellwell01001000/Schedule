@@ -11,7 +11,7 @@ import {
   addTimeToDateTask,
   cleanZeroHourTasksFromHistory,
 } from '../data/historyStore';
-import { PomodoroTimer } from './PomodoroTimer';
+import { PomodoroTimer, PomodoroTimerHandle } from './PomodoroTimer';
 import {
   findRoutineMatches,
   applyDeschedule,
@@ -28,6 +28,8 @@ import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionM
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
+import { CategorySelect } from './CategorySelect';
+import { getCategoryLabel } from '../data/categoryStore';
 import { setLocalLastModified } from '../services/driveVaultService';
 
 interface TrackerViewProps {
@@ -110,7 +112,7 @@ export function TrackerView({
   // Modal / Form state for Add Task
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newCategory, setNewCategory] = useState<TaskCategory>('custom');
+  const [newCategory, setNewCategory] = useState<TaskCategory>('work');
   const [newTimeSlot, setNewTimeSlot] = useState('19:00 – 20:00');
   const [newDuration, setNewDuration] = useState<number>(60);
   const [newDetails, setNewDetails] = useState('');
@@ -157,6 +159,12 @@ export function TrackerView({
   const [activeTimerTaskId, setActiveTimerTaskId] = useState<string | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Quick Filter and input refs for keyboard shortcuts
+  const [filterQuery, setFilterQuery] = useState<string>('');
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const pomodoroRef = useRef<PomodoroTimerHandle>(null);
 
   // Stopwatch interval handler
   useEffect(() => {
@@ -567,6 +575,139 @@ export function TrackerView({
 
   const isDirectlyInSession = directiveMode === 'IN_SESSION';
 
+  // Filtered task lists based on Quick Filter query [/]
+  const filteredScheduledTasks = useMemo(() => {
+    if (!filterQuery.trim()) return scheduledTasks;
+    const q = filterQuery.toLowerCase().trim();
+    return scheduledTasks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q) ||
+        t.time.toLowerCase().includes(q) ||
+        (t.details && t.details.toLowerCase().includes(q))
+    );
+  }, [scheduledTasks, filterQuery]);
+
+  const filteredDescheduledTasks = useMemo(() => {
+    if (!filterQuery.trim()) return descheduledTasks;
+    const q = filterQuery.toLowerCase().trim();
+    return descheduledTasks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q) ||
+        t.time.toLowerCase().includes(q) ||
+        (t.details && t.details.toLowerCase().includes(q))
+    );
+  }, [descheduledTasks, filterQuery]);
+
+  // Keyboard shortcuts listener for Tracker View actions: Space (Timer), X (Done), L (+15m), R (Reset), N (New), / (Filter)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept when user is typing inside an input or textarea
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        return;
+      }
+
+      // Space: Start / Stop Stopwatch on current focus task
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        if (activeTimerTaskId) {
+          // Stop running timer and credit accumulated time
+          const runningTask = scheduledTasks.find((t) => t.id === activeTimerTaskId);
+          const additionalMinutes = Math.round(timerSeconds / 60);
+          if (additionalMinutes > 0) {
+            handleAdjustTime(activeTimerTaskId, additionalMinutes);
+          }
+          setActiveTimerTaskId(null);
+          setTimerSeconds(0);
+          setToastMessage(
+            `[STOPWATCH STOPPED]: ${additionalMinutes}m credited to ${runningTask?.title || 'task'}`
+          );
+          setTimeout(() => setToastMessage(null), 3000);
+        } else if (currentFocusTask) {
+          // Start timer on current directive task
+          setActiveTimerTaskId(currentFocusTask.id);
+          setTimerSeconds(0);
+          setToastMessage(`[STOPWATCH STARTED]: Tracking "${currentFocusTask.title}"`);
+          setTimeout(() => setToastMessage(null), 3000);
+        }
+      }
+
+      // X: Toggle Complete on current directive task
+      if (e.key === 'x' || e.key === 'X') {
+        if (currentFocusTask) {
+          e.preventDefault();
+          toggleTaskCompletion(currentFocusTask.id);
+          const isNowDone = !completedTaskIds.includes(currentFocusTask.id);
+          setToastMessage(
+            isNowDone
+              ? `[TASK COMPLETED]: "${currentFocusTask.title}"`
+              : `[TASK REOPENED]: "${currentFocusTask.title}"`
+          );
+          setTimeout(() => setToastMessage(null), 3000);
+        }
+      }
+
+      // L: Quick log time (+15m) to current directive task
+      if (e.key === 'l' || e.key === 'L') {
+        if (currentFocusTask) {
+          e.preventDefault();
+          handleAdjustTime(currentFocusTask.id, 15);
+          const totalNow = (dateTrackedTimeMap[currentFocusTask.id] || 0) + 15;
+          setToastMessage(`[+15M LOGGED]: "${currentFocusTask.title}" now has ${totalNow}m tracked`);
+          setTimeout(() => setToastMessage(null), 3000);
+        }
+      }
+
+      // P: Start / Pause Pomodoro session (attached by default to current task or "Start Late" in focus)
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        const targetTask = currentFocusTask || scheduledTasks[0];
+        const isNowRunning = pomodoroRef.current?.togglePlayPause(targetTask?.id);
+        setToastMessage(
+          isNowRunning
+            ? `[POMODORO RUNNING]: Attached to "${targetTask?.title || 'task'}"`
+            : '[POMODORO PAUSED]'
+        );
+        setTimeout(() => setToastMessage(null), 3000);
+      }
+
+      // R: Reset Pomodoro Timer to preset duration
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        pomodoroRef.current?.reset();
+        setToastMessage('[POMODORO RESET]: Timer reset to preset');
+        setTimeout(() => setToastMessage(null), 3000);
+      }
+
+      // N: Add new task
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        setIsAddingTask(true);
+        setTimeout(() => {
+          titleInputRef.current?.focus();
+        }, 50);
+      }
+
+      // /: Quick Filter Search
+      if (e.key === '/') {
+        e.preventDefault();
+        filterInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    activeTimerTaskId,
+    timerSeconds,
+    currentFocusTask,
+    scheduledTasks,
+    completedTaskIds,
+    dateTrackedTimeMap,
+  ]);
+
   const asciiBar = generateAsciiProgressBar(completedCount, totalTasks, barWidth, asciiStyle);
 
   const daysList = [
@@ -809,6 +950,7 @@ export function TrackerView({
                   TASK TITLE *
                 </label>
                 <input
+                  ref={titleInputRef}
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
@@ -818,26 +960,10 @@ export function TrackerView({
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[11px] opacity-70 uppercase font-bold block">
-                  CATEGORY
-                </label>
-                <select
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value as TaskCategory)}
-                  className="w-full bg-black border border-white/50 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
-                >
-                  <option value="ml">MACHINE LEARNING (ML)</option>
-                  <option value="cyber">CYBERSECURITY (CYBER)</option>
-                  <option value="gamedev">GAME DEVELOPMENT (GAMEDEV)</option>
-                  <option value="guitar">GUITAR &amp; MUSIC</option>
-                  <option value="workout">WORKOUT / PHYSICAL</option>
-                  <option value="college">COLLEGE / LAB</option>
-                  <option value="leisure">GAMING / LEISURE</option>
-                  <option value="routine">ROUTINE / HABIT</option>
-                  <option value="custom">CUSTOM INITIATIVE</option>
-                </select>
-              </div>
+              <CategorySelect
+                value={newCategory}
+                onChange={(cat) => setNewCategory(cat as TaskCategory)}
+              />
             </div>
 
             {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
@@ -1209,10 +1335,44 @@ export function TrackerView({
               </div>
             ) : null}
 
+            {/* Quick Filter Search Bar */}
+            <div className="flex items-center gap-2 border border-white/30 bg-white/5 p-2 text-xs">
+              <span className="text-white font-bold opacity-60 font-mono">[/] FILTER:</span>
+              <input
+                ref={filterInputRef}
+                type="text"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setFilterQuery('');
+                    filterInputRef.current?.blur();
+                  }
+                }}
+                placeholder="Filter tasks by title, category, or time... (Press / to focus, Esc to clear)"
+                className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-white/40 font-mono"
+              />
+              {filterQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterQuery('');
+                    filterInputRef.current?.focus();
+                  }}
+                  className="text-[10px] uppercase font-bold text-white/70 hover:text-white px-1.5 py-0.5 border border-white/40 cursor-pointer"
+                >
+                  [CLEAR (ESC)]
+                </button>
+              )}
+            </div>
+
             {/* SCHEDULED ACTIVE TASKS */}
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] opacity-60 uppercase font-bold tracking-wider">
-                <span>ACTIVE SCHEDULED TASKS ({scheduledTasks.length})</span>
+                <span>
+                  ACTIVE SCHEDULED TASKS ({filteredScheduledTasks.length}
+                  {filterQuery ? ` / ${scheduledTasks.length}` : ''})
+                </span>
                 {scheduledTasks.length > 0 && (
                   <button
                     onClick={handleDescheduleAllToday}
@@ -1228,8 +1388,12 @@ export function TrackerView({
                 <div className="p-6 border border-white/20 text-center text-xs opacity-60">
                   NO TASKS CURRENTLY SCHEDULED FOR {currentSchedule.dayName.toUpperCase()}. USE [+ ADD TASK] ABOVE OR ACTIVATE PARKED TASKS BELOW.
                 </div>
+              ) : filteredScheduledTasks.length === 0 ? (
+                <div className="p-6 border border-white/20 text-center text-xs opacity-60">
+                  NO TASKS MATCHING &quot;{filterQuery.toUpperCase()}&quot;. PRESS [ESC] TO CLEAR FILTER.
+                </div>
               ) : (
-                scheduledTasks.map((task) => {
+                filteredScheduledTasks.map((task) => {
                   const isCompleted = completedTaskIds.includes(task.id);
                   const isInProgress = currentFocusTask?.id === task.id && !isCompleted;
                   const isTimerRunning = activeTimerTaskId === task.id;
@@ -1287,7 +1451,7 @@ export function TrackerView({
                               </span>
 
                               <span className="text-[10px] uppercase border border-white/30 px-1 py-0 opacity-75">
-                                {task.category}
+                                {getCategoryLabel(task.category)}
                               </span>
 
                               {isRecurringAcrossDays ? (
@@ -1442,7 +1606,7 @@ export function TrackerView({
                 </div>
 
                 <div className="divide-y divide-white/10 border border-white/20 bg-black">
-                  {descheduledTasks.map((task) => {
+                  {filteredDescheduledTasks.map((task) => {
                     const matches = findRoutineMatches(task, schedules);
                     const isRecurringAcrossDays = matches.length > 1;
 
@@ -1457,7 +1621,7 @@ export function TrackerView({
                               {task.title}
                             </span>
                             <span className="text-[10px] uppercase border border-white/30 px-1 py-0">
-                              {task.category}
+                              {getCategoryLabel(task.category)}
                             </span>
                             <span className="text-[10px] opacity-60 font-mono">
                               [{task.time}]
@@ -1595,6 +1759,7 @@ export function TrackerView({
 
           {/* Card 2: _POMODORO_SESSION_ENGINE */}
           <PomodoroTimer
+            ref={pomodoroRef}
             scheduledTasks={scheduledTasks}
             activeFocusTaskId={currentFocusTask?.id}
             onLogMinutesToTask={(taskId, mins) => {

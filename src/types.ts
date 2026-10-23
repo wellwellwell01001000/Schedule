@@ -2,16 +2,7 @@ export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
 export type DayCode = 'A-DAY' | 'B-DAY' | 'WEEKEND-SAT' | 'WEEKEND-SUN' | string;
 
-export type TaskCategory = 
-  | 'workout'
-  | 'ml'
-  | 'guitar'
-  | 'cyber'
-  | 'gamedev'
-  | 'college'
-  | 'leisure'
-  | 'routine'
-  | 'custom';
+export type TaskCategory = 'work' | 'workout' | 'leisure' | string;
 
 export interface TaskItem {
   id: string;

@@ -3,6 +3,7 @@ import { TaskItem, TaskCategory, DayKey, DaySchedule } from '../types';
 import { findRoutineMatches, TaskDayMatch } from '../utils/taskRecurrence';
 import { getDateForDayKey } from '../utils/ascii';
 import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
+import { CategorySelect } from './CategorySelect';
 
 interface EditTaskModalProps {
   isOpen: boolean;
@@ -124,26 +125,10 @@ export function EditTaskModal({
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] opacity-70 uppercase font-bold block">
-                CATEGORY
-              </label>
-              <select
-                value={category}
-                onChange={(e) => setNewCategory(e.target.value as TaskCategory)}
-                className="w-full bg-black border border-white/60 px-3 py-1.5 text-xs text-white focus:border-white focus:outline-none uppercase"
-              >
-                <option value="ml">MACHINE LEARNING (ML)</option>
-                <option value="cyber">CYBERSECURITY (CYBER)</option>
-                <option value="gamedev">GAME DEVELOPMENT (GAMEDEV)</option>
-                <option value="guitar">GUITAR &amp; MUSIC</option>
-                <option value="workout">WORKOUT / PHYSICAL</option>
-                <option value="college">COLLEGE / LAB</option>
-                <option value="leisure">GAMING / LEISURE</option>
-                <option value="routine">ROUTINE / HABIT</option>
-                <option value="custom">CUSTOM INITIATIVE</option>
-              </select>
-            </div>
+            <CategorySelect
+              value={category}
+              onChange={(cat) => setNewCategory(cat as TaskCategory)}
+            />
           </div>
 
           {/* Interactive Start & End Time Blocks with Synchronized Estimate */}

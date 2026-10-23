@@ -12,6 +12,8 @@ interface HeaderProps {
   onOpenBackup?: () => void;
   onOpenTutorial?: () => void;
   onOpenBulkIngest?: () => void;
+  onOpenSettings?: () => void;
+  onOpenShortcuts?: () => void;
   onQuickDriveSync?: () => void;
   isSyncing?: boolean;
   syncCode?: string;
@@ -26,6 +28,8 @@ export function Header({
   onOpenBackup,
   onOpenTutorial,
   onOpenBulkIngest,
+  onOpenSettings,
+  onOpenShortcuts,
   onQuickDriveSync,
   isSyncing,
   syncCode,
@@ -145,35 +149,25 @@ export function Header({
             </button>
           )}
 
-          {onOpenTemplates && (
+          {onOpenSettings && (
             <button
-              onClick={onOpenTemplates}
-              className="border border-white bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer uppercase font-bold flex items-center gap-1.5"
-              title="Switch between Clean Slate (0 tasks), Alternating Split, or custom templates"
+              onClick={onOpenSettings}
+              className="border border-white bg-black hover:bg-white hover:text-black px-3 py-1 text-xs transition-none cursor-pointer uppercase font-bold flex items-center gap-1.5 shadow-sm"
+              title="Open System Settings Console (Hotkey: S)"
             >
-              <span className="inline-block w-1.5 h-1.5 bg-white" />
-              <span>[TEMPLATES]</span>
+              <span className="text-xs">⚙</span>
+              <span>[SETTINGS]</span>
             </button>
           )}
 
-          {onOpenTutorial && (
+          {onOpenShortcuts && (
             <button
-              onClick={onOpenTutorial}
-              className="border border-white/60 bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer uppercase font-bold flex items-center gap-1.5"
-              title="Revisit the interactive system tutorial & guide"
+              onClick={onOpenShortcuts}
+              className="border border-white/60 bg-black hover:bg-white hover:text-black px-2.5 py-1 text-xs transition-none cursor-pointer uppercase font-bold flex items-center gap-1 shadow-sm"
+              title="View all Keyboard Shortcuts (Hotkey: K)"
             >
-              <span className="inline-block w-1.5 h-1.5 bg-white animate-pulse" />
-              <span>[TUTORIAL]</span>
-            </button>
-          )}
-
-          {onOpenBackup && (
-            <button
-              onClick={onOpenBackup}
-              className="border border-white/60 bg-black px-2.5 py-1 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer uppercase font-bold flex items-center gap-1.5"
-            >
-              <span className="inline-block w-1.5 h-1.5 bg-white" />
-              <span>[ARCHIVE]</span>
+              <span className="text-white bg-white/20 px-1 py-0 text-[10px] font-mono">K</span>
+              <span>[KEYS]</span>
             </button>
           )}
 
