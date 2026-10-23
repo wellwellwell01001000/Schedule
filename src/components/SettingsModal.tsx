@@ -83,7 +83,7 @@ export function SettingsModal({
   onPurgeAndStartClean,
   onRefreshHistory,
   onOpenTutorial,
-  initialTab = 'templates',
+  initialTab = 'system',
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [toast, setToast] = useState<string | null>(null);
@@ -267,12 +267,12 @@ export function SettingsModal({
         return;
       }
 
-      if (e.key === '1') setActiveTab('templates');
-      if (e.key === '2') setActiveTab('sounds');
-      if (e.key === '3') setActiveTab('archive');
-      if (e.key === '4') setActiveTab('categories');
-      if (e.key === '5') setActiveTab('cloud');
-      if (e.key === '6') setActiveTab('system');
+      if (e.key === '1') setActiveTab('system');
+      if (e.key === '2') setActiveTab('categories');
+      if (e.key === '3') setActiveTab('cloud');
+      if (e.key === '4') setActiveTab('sounds');
+      if (e.key === '5') setActiveTab('archive');
+      if (e.key === '6') setActiveTab('templates');
 
       e.stopPropagation();
     };
@@ -555,44 +555,14 @@ export function SettingsModal({
         <div className="flex border-b-2 border-white bg-black shrink-0 overflow-x-auto text-xs font-bold uppercase divide-x divide-white/40">
           <button
             type="button"
-            onClick={() => setActiveTab('templates')}
+            onClick={() => setActiveTab('system')}
             className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
-              activeTab === 'templates'
+              activeTab === 'system'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[1] TEMPLATES</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('sounds')}
-            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
-              activeTab === 'sounds'
-                ? 'bg-white text-black font-black'
-                : 'text-white/80 hover:bg-white/10 hover:text-white'
-            }`}
-          >
-            <span>[2] SOUNDS</span>
-            {(soundsConfig.taskCompleteAudioUrl || soundsConfig.pomodoroCompleteAudioUrl || soundsConfig.breakCompleteAudioUrl) && (
-              <span className="text-[9px] px-1 bg-white/20 font-mono">CUSTOM</span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('archive')}
-            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
-              activeTab === 'archive'
-                ? 'bg-white text-black font-black'
-                : 'text-white/80 hover:bg-white/10 hover:text-white'
-            }`}
-          >
-            <span>[3] ARCHIVE</span>
-            <span className="text-[10px] px-1 bg-white/20 text-white font-mono">
-              {snapshots.length}
-            </span>
+            <span>[1] SYSTEM</span>
           </button>
 
           <button
@@ -604,7 +574,7 @@ export function SettingsModal({
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[4] CATEGORIES</span>
+            <span>[2] CATEGORIES</span>
             <span className="text-[10px] px-1 bg-white/20 text-white font-mono">
               {categories.length}
             </span>
@@ -619,7 +589,7 @@ export function SettingsModal({
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[5] CLOUD SYNC</span>
+            <span>[3] CLOUD SYNC</span>
             <span
               className={`text-[9px] px-1 font-mono ${
                 isVaultConfigured() ? 'bg-white text-black' : 'border border-white/50 text-white/60'
@@ -631,14 +601,44 @@ export function SettingsModal({
 
           <button
             type="button"
-            onClick={() => setActiveTab('system')}
+            onClick={() => setActiveTab('sounds')}
             className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
-              activeTab === 'system'
+              activeTab === 'sounds'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[6] SYSTEM</span>
+            <span>[4] SOUNDS</span>
+            {(soundsConfig.taskCompleteAudioUrl || soundsConfig.pomodoroCompleteAudioUrl || soundsConfig.breakCompleteAudioUrl) && (
+              <span className="text-[9px] px-1 bg-white/20 font-mono">CUSTOM</span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('archive')}
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+              activeTab === 'archive'
+                ? 'bg-white text-black font-black'
+                : 'text-white/80 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <span>[5] ARCHIVE</span>
+            <span className="text-[10px] px-1 bg-white/20 text-white font-mono">
+              {snapshots.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('templates')}
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+              activeTab === 'templates'
+                ? 'bg-white text-black font-black'
+                : 'text-white/80 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <span>[6] TEMPLATES</span>
           </button>
         </div>
 

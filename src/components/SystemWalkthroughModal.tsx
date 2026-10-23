@@ -33,7 +33,7 @@ export function SystemWalkthroughModal({
 
   if (!isOpen) return null;
 
-  const totalSteps = 5;
+  const totalSteps = 6;
 
   const handleNext = () => {
     if (currentStep < totalSteps) {
@@ -67,24 +67,24 @@ export function SystemWalkthroughModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 font-mono">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 font-mono select-none">
       <div className="border-2 border-white bg-black w-full max-w-2xl text-white shadow-2xl flex flex-col max-h-[90vh]">
         {/* Modal Header */}
-        <div className="bg-white text-black px-4 py-2.5 font-bold flex items-center justify-between border-b border-black">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-2.5 h-2.5 bg-black" />
-            <span className="text-xs uppercase tracking-wider">
-              _SYS_DIRECTIVE // SYSTEM_ONBOARDING_WALKTHROUGH
+        <div className="bg-white text-black px-4 py-2.5 font-bold flex items-center justify-between border-b border-black shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-block w-2.5 h-2.5 bg-black shrink-0" />
+            <span className="text-xs uppercase tracking-wider truncate">
+              _SYS_DIRECTIVE // MASTER_SYSTEM_WALKTHROUGH
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] bg-black text-white px-2 py-0.5 font-black uppercase">
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-[10px] bg-black text-white px-2 py-0.5 font-black uppercase font-mono">
               STEP [{currentStep}/{totalSteps}]
             </span>
             <button
               onClick={handleComplete}
               className="text-xs font-black px-2 py-0.5 border border-black hover:bg-black hover:text-white transition-none cursor-pointer uppercase"
-              title="Close and enter app"
+              title="Close and enter application"
             >
               [ESC / SKIP]
             </button>
@@ -92,26 +92,26 @@ export function SystemWalkthroughModal({
         </div>
 
         {/* Modal Body / Step Content */}
-        <div className="p-6 overflow-y-auto space-y-6 text-xs flex-1">
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs flex-1">
           {cleanedNotice && (
             <div className="border-2 border-white bg-white text-black p-3 font-bold text-center text-xs tracking-tight">
               ✓ ALL PLACEHOLDER DATA REMOVED. ZERO BASELINE ESTABLISHED!
             </div>
           )}
 
-          {/* STEP 1: Alternating Schedule Framework */}
+          {/* STEP 1: Alternating Schedule Framework & Day Cycle */}
           {currentStep === 1 && (
             <div className="space-y-4">
               <div className="border-l-4 border-white pl-3 py-1">
-                <span className="text-[10px] uppercase tracking-widest opacity-60">PHASE 01 // ARCHITECTURE</span>
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 01 // ARCHITECTURE</span>
                 <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
-                  THE ALTERNATING ROUTINE BLUEPRINT
+                  ALTERNATING ROUTINES &amp; DAY NAVIGATION
                 </h2>
               </div>
 
-              <p className="leading-relaxed opacity-85 text-justify">
-                Standard calendars fracture your cognitive focus by cramming 6 different subjects into every day. 
-                This system eliminates context-switching burnout by alternating your cognitive load:
+              <p className="leading-relaxed opacity-85">
+                Standard calendars cause cognitive burnout by cramming too many disparate subjects into a single day. 
+                This system rotates your cognitive load across alternating focus days:
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -120,8 +120,8 @@ export function SystemWalkthroughModal({
                     <span className="w-2 h-2 bg-white inline-block" />
                     <span>A-DAYS (MON / WED / FRI)</span>
                   </div>
-                  <div className="text-[11px] opacity-75">
-                    <strong>Creative &amp; Motor Split</strong>: Peak morning analytical focus (Machine Learning) paired with evening motor recovery (Guitar practice &amp; guilt-free gaming).
+                  <div className="text-[11px] opacity-75 leading-relaxed">
+                    <strong>Creative &amp; Analytical Split</strong>: Morning Machine Learning paired with evening Guitar practice &amp; recovery.
                   </div>
                 </div>
 
@@ -130,37 +130,43 @@ export function SystemWalkthroughModal({
                     <span className="w-2 h-2 bg-white inline-block" />
                     <span>B-DAYS (TUE / THU)</span>
                   </div>
-                  <div className="text-[11px] opacity-75">
-                    <strong>Technical &amp; Systems Split</strong>: Morning Machine Learning paired with unbroken 90-minute evening Cybersecurity lab sessions.
+                  <div className="text-[11px] opacity-75 leading-relaxed">
+                    <strong>Systems &amp; Technical Split</strong>: Morning Machine Learning paired with unbroken 90-minute evening Cybersecurity lab sessions.
                   </div>
                 </div>
               </div>
 
-              <div className="border border-white/20 p-2.5 bg-black text-[11px] opacity-70">
-                &gt; Tap any day button (<code className="text-white">[MON]</code>, <code className="text-white">[TUE]</code>, etc.) at the top of the Timeline Tracker to inspect or modify the schedule for that day.
+              <div className="border border-white/30 p-3 bg-black space-y-2">
+                <div className="font-bold text-white uppercase text-[11px]">DAY NAVIGATION CONTROLS:</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] opacity-80">
+                  <div>• Tap <code className="text-white bg-white/10 px-1">[MON]</code>..<code className="text-white bg-white/10 px-1">[SUN]</code> tabs at top</div>
+                  <div>• Press <code className="text-white bg-white/10 px-1">[ [ ]</code> / <code className="text-white bg-white/10 px-1">[ ] ]</code> to cycle days</div>
+                  <div>• Click <code className="text-white bg-white/10 px-1">[TODAY]</code> or press <code className="text-white bg-white/10 px-1">[T]</code></div>
+                  <div>• Repetitive vs One-Time Date Scoping</div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* STEP 2: Active Time Tracking (Stopwatch & Pomodoro) */}
+          {/* STEP 2: Active Time Tracking & Custom Sound Effects */}
           {currentStep === 2 && (
             <div className="space-y-4">
               <div className="border-l-4 border-white pl-3 py-1">
-                <span className="text-[10px] uppercase tracking-widest opacity-60">PHASE 02 // EXECUTION</span>
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 02 // EXECUTION &amp; SOUNDS</span>
                 <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
-                  REAL-TIME TIME TRACKING &amp; POMODORO
+                  TIME TRACKING, POMODORO &amp; AUDIO EFFECTS
                 </h2>
               </div>
 
               <p className="leading-relaxed opacity-85">
-                Every task in your routine is interactive and feeds directly into your analytics without manual spreadsheets:
+                Every task is interactive and feeds directly into your analytics without manual spreadsheets:
               </p>
 
               <div className="space-y-2.5">
                 <div className="border border-white/30 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <span className="font-bold text-white uppercase">[START TIMER] (LIVE STOPWATCH)</span>
-                    <p className="opacity-70 text-[11px]">Starts a live seconds-counter for that specific task. Perfect when actively studying or practicing.</p>
+                    <span className="font-bold text-white uppercase">[START TIMER] (LIVE STOPWATCH / [SPACE])</span>
+                    <p className="opacity-70 text-[11px]">Starts a live seconds-counter on active directive tasks.</p>
                   </div>
                   <span className="shrink-0 border border-white px-2 py-0.5 font-bold uppercase bg-white text-black">
                     00:45:22
@@ -169,8 +175,8 @@ export function SystemWalkthroughModal({
 
                 <div className="border border-white/30 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <span className="font-bold text-white uppercase">[POMODORO] (DEEP FOCUS ENGINE)</span>
-                    <p className="opacity-70 text-[11px]">Launches a dedicated focus loop with customizable intervals, audio chimes, and automatic minute logging upon completion.</p>
+                    <span className="font-bold text-white uppercase">[POMODORO ENGINE / [P] / [R]]</span>
+                    <p className="opacity-70 text-[11px]">Focus loops (25m / 50m) attached to scheduled tasks with auto minute logging upon completion or pause.</p>
                   </div>
                   <span className="shrink-0 border border-white px-2 py-0.5 font-bold uppercase">
                     25m FOCUS
@@ -179,119 +185,172 @@ export function SystemWalkthroughModal({
 
                 <div className="border border-white/30 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <span className="font-bold text-white uppercase">[+15M] / [-15M] (QUICK LOG / REDUCE)</span>
-                    <p className="opacity-70 text-[11px]">Quickly increment or decrease (+15m / -15m) tracked minutes on active tasks with hotkeys [L] and [J].</p>
+                    <span className="font-bold text-white uppercase">[+15M] / [-15M] (QUICK LOG / REDUCE / [L] / [J])</span>
+                    <p className="opacity-70 text-[11px]">Quickly increment (+15m) or reduce (-15m) tracked minutes, floored safely at 0m.</p>
                   </div>
                   <span className="shrink-0 border border-white px-2 py-0.5 font-bold uppercase">
                     +15M / -15M
                   </span>
                 </div>
 
-                <div className="border border-white/20 p-2.5 bg-white/5 text-[11px] opacity-80">
-                  ★ <strong>Custom Hotkeys</strong>: All keyboard shortcuts (Pomodoro, timers, views, creation, modals) can be rebound or reset anytime in <strong>Settings [S] &rarr; [6] System</strong>.
+                <div className="border border-white/40 p-3 bg-white/5 space-y-1">
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>★ CUSTOM AUDIO EFFECTS (OPTION B)</span>
+                    <span className="text-[9px] bg-white text-black font-black px-1.5 py-0.5">SETTINGS [4] SOUNDS</span>
+                  </div>
+                  <p className="opacity-75 leading-relaxed text-[11px]">
+                    Upload your own audio files (<code className="text-white">.mp3</code>, <code className="text-white">.wav</code>) or paste direct audio URLs in <strong>Settings [S] &rarr; [4] SOUNDS</strong> for Task Completion, Focus Complete, and Break Complete. Web Audio API chimes automatically act as fallbacks.
+                  </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* STEP 3: Progress & Task Checkmarks */}
+          {/* STEP 3: Task Management, Parking, Bulk Ingest & Search */}
           {currentStep === 3 && (
             <div className="space-y-4">
               <div className="border-l-4 border-white pl-3 py-1">
-                <span className="text-[10px] uppercase tracking-widest opacity-60">PHASE 03 // DISCIPLINE</span>
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 03 // DISCIPLINE</span>
                 <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
-                  CHECKMARKS, ASCII BARS &amp; CUSTOM TASKS
+                  CHECKMARKS, PARKING, BULK INGEST &amp; SEARCH
                 </h2>
               </div>
 
               <div className="space-y-3">
                 <div className="border border-white/40 p-3 bg-white/5 space-y-1">
-                  <div className="font-bold text-white uppercase">1. MARKING TASKS COMPLETED [X]</div>
-                  <p className="opacity-75 leading-relaxed text-[11px]">
-                    Click the checkbox next to any task when finished. If you haven&apos;t run the timer, checking the box automatically logs the planned duration as completed time.
-                  </p>
-                </div>
-
-                <div className="border border-white/40 p-3 bg-white/5 space-y-1">
-                  <div className="font-bold text-white uppercase">2. REAL-TIME ASCII PROGRESS BAR</div>
-                  <p className="opacity-75 leading-relaxed text-[11px]">
-                    Watch your daily discipline percentage climb visually in real time:
-                  </p>
-                  <div className="font-mono text-xs border border-white/30 p-2 bg-black text-white">
-                    [████████████░░░░░░░░░░] 60% [6/10 TASKS]
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>1. MARKING TASKS COMPLETED [X]</span>
+                    <span className="font-mono text-[10px] opacity-60">HOTKEY: [X]</span>
                   </div>
-                  <p className="opacity-60 text-[10px]">
-                    Click <strong>[COPY ASCII SUMMARY]</strong> to copy a formatted report to your clipboard to paste into notes or Discord.
+                  <p className="opacity-75 leading-relaxed text-[11px]">
+                    Check off tasks when finished. Unworked completed tasks log planned minutes automatically, while active timer tasks log actual elapsed minutes.
                   </p>
                 </div>
 
                 <div className="border border-white/40 p-3 bg-white/5 space-y-1">
-                  <div className="font-bold text-white uppercase">3. ADDING YOUR OWN TASKS</div>
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>2. PARKING / DESCHEDULING TASKS</span>
+                    <span className="font-mono text-[10px] opacity-60">[PARK] / [RESTORE]</span>
+                  </div>
                   <p className="opacity-75 leading-relaxed text-[11px]">
-                    Click <strong>[+ ADD CUSTOM TASK]</strong> on any day to schedule custom coursework, project milestones, or specific workout routines.
+                    Skip tasks without deleting them! Park a task for <strong>Today Only</strong> or <strong>Across All Days</strong>. Reactivate them anytime from the Parked Inventory or the <strong>[RECURRING ROUTINES]</strong> manager.
+                  </p>
+                </div>
+
+                <div className="border border-white/40 p-3 bg-white/5 space-y-1">
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>3. TASK CREATION &amp; BULK INGEST [N] / [B]</span>
+                    <span className="font-mono text-[10px] opacity-60">HOTKEYS: [N] &amp; [B]</span>
+                  </div>
+                  <p className="opacity-75 leading-relaxed text-[11px]">
+                    Press <code className="text-white">[N]</code> to slide open the top New Task specification panel, or press <code className="text-white">[B]</code> to paste a multi-line batch schedule. Press <code className="text-white">[/]</code> anytime for instant search &amp; query filtering.
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* STEP 4: Analytics & Audit Views */}
+          {/* STEP 4: Settings Console & Customizable Hotkeys */}
           {currentStep === 4 && (
             <div className="space-y-4">
               <div className="border-l-4 border-white pl-3 py-1">
-                <span className="text-[10px] uppercase tracking-widest opacity-60">PHASE 04 // AUDIT</span>
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 04 // CONFIGURATION</span>
                 <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
-                  VIEWS [2] &amp; [3]: DRILLDOWN ANALYTICS &amp; TASK AUDIT
+                  SETTINGS CONSOLE &amp; CUSTOM HOTKEY EDITOR
                 </h2>
               </div>
 
               <p className="leading-relaxed opacity-85">
-                Use the top navigation buttons or press <code className="text-white">[1]</code>, <code className="text-white">[2]</code>, <code className="text-white">[3]</code> on your keyboard:
+                Press <code className="text-white">[S]</code> from anywhere to open the System Settings Console with 6 organized tabs:
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="border border-white/30 p-3 space-y-1.5 bg-black">
-                  <div className="font-bold text-white text-[11px] uppercase">[2] _HIERARCHY_METRICS</div>
-                  <p className="opacity-75 text-[11px] leading-relaxed">
-                    Drill down seamlessly through <strong>Months &rarr; Weeks &rarr; Days &rarr; Tasks</strong>. 
-                    Inspect past-week vs. current-week pacing and compliance percentages.
-                  </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[1] SYSTEM</strong>: Interactive shortcut customizer, tutorial, and zero baseline purge.
                 </div>
-
-                <div className="border border-white/30 p-3 space-y-1.5 bg-black">
-                  <div className="font-bold text-white text-[11px] uppercase">[3] _TASK_TIME_AUDIT</div>
-                  <p className="opacity-75 text-[11px] leading-relaxed">
-                    Audits exact lifetime hours invested per subject (e.g. Total ML hours vs. Guitar hours vs. Cybersecurity hours).
-                  </p>
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[2] CATEGORIES</strong>: Category definitions, colors, and badge labels.
+                </div>
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[3] CLOUD SYNC</strong>: Google Drive Vault URL &amp; 6-character Sync Code pairing.
+                </div>
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[4] SOUNDS</strong>: Audio customizer for uploaded files and URL sound clips.
+                </div>
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[5] ARCHIVE</strong>: Point-in-time snapshots and JSON backup imports.
+                </div>
+                <div className="border border-white/30 p-2.5 bg-black">
+                  <strong className="text-white">[6] TEMPLATES</strong>: Built-in routine templates and custom routine presets.
                 </div>
               </div>
 
-              <div className="border border-white/20 p-2.5 bg-white/5 text-[11px] opacity-80">
-                ★ <strong>Genuine Tracking</strong>: Your analytics reflect only genuine minutes logged and tasks completed.
+              <div className="border border-white/40 p-3 bg-white/5 space-y-1">
+                <div className="font-bold text-white uppercase text-[11px]">★ CUSTOMIZABLE KEYBOARD SHORTCUTS</div>
+                <p className="opacity-75 leading-relaxed text-[11px]">
+                  Go to <strong>Settings [S] &rarr; [1] SYSTEM</strong> to rebind any shortcut. Click <code className="text-white">[EDIT]</code> and press your preferred key, or click <code className="text-white">[RESET ALL TO DEFAULTS]</code> to restore factory hotkeys anytime.
+                </p>
               </div>
             </div>
           )}
 
-          {/* STEP 5: Persistence, Google Drive Sync & Reset to Clean */}
+          {/* STEP 5: Analytics & Lifetime Task Audit */}
           {currentStep === 5 && (
             <div className="space-y-4">
               <div className="border-l-4 border-white pl-3 py-1">
-                <span className="text-[10px] uppercase tracking-widest opacity-60">PHASE 05 // PERSISTENCE</span>
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 05 // AUDIT</span>
                 <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
-                  SYNC, BACKUP &amp; YOUR CLEAN START
+                  VIEWS [1], [2], [3]: TIMELINE, METRICS &amp; AUDIT
+                </h2>
+              </div>
+
+              <p className="leading-relaxed opacity-85">
+                Switch views instantly with single-key shortcuts <code className="text-white">[1]</code>, <code className="text-white">[2]</code>, <code className="text-white">[3]</code>:
+              </p>
+
+              <div className="space-y-2.5">
+                <div className="border border-white/30 p-3 bg-black space-y-1">
+                  <div className="font-bold text-white text-[11px] uppercase">[1] _TIMELINE_TRACKER</div>
+                  <p className="opacity-75 text-[11px] leading-relaxed">
+                    Daily execution dashboard, live timers, Pomodoro focus engine, task checkmarks, and ASCII progress bar summaries.
+                  </p>
+                </div>
+
+                <div className="border border-white/30 p-3 bg-black space-y-1">
+                  <div className="font-bold text-white text-[11px] uppercase">[2] _HIERARCHY_METRICS</div>
+                  <p className="opacity-75 text-[11px] leading-relaxed">
+                    Multi-level analytical drilldown through <strong>Months &rarr; Weeks &rarr; Days &rarr; Tasks</strong> with compliance percentages and week-over-week pacing comparison.
+                  </p>
+                </div>
+
+                <div className="border border-white/30 p-3 bg-black space-y-1">
+                  <div className="font-bold text-white text-[11px] uppercase">[3] _TASK_TIME_AUDIT</div>
+                  <p className="opacity-75 text-[11px] leading-relaxed">
+                    Lifetime aggregate hours ledger per task/subject (e.g. Total ML hours vs. Guitar hours vs. Cybersecurity hours) with selective audit removal.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 6: Cloud Sync, Persistence & Clean Slate */}
+          {currentStep === 6 && (
+            <div className="space-y-4">
+              <div className="border-l-4 border-white pl-3 py-1">
+                <span className="text-[10px] uppercase tracking-widest opacity-60">STEP 06 // PERSISTENCE</span>
+                <h2 className="text-lg md:text-xl font-black uppercase tracking-tight text-white mt-0.5">
+                  GOOGLE DRIVE CLOUD SYNC &amp; ZERO BASELINE
                 </h2>
               </div>
 
               <div className="space-y-3">
                 <div className="border border-white/40 p-3 space-y-1 bg-white/5">
-                  <div className="font-bold text-white uppercase flex items-center gap-2">
-                    <span className="w-2 h-2 bg-white inline-block" />
-                    <span>[SYNC &amp; BACKUP] (GOOGLE DRIVE VAULT)</span>
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>[SYNC &amp; BACKUP] (GOOGLE DRIVE VAULT / [U])</span>
+                    <span className="font-mono text-[10px] opacity-60">HOTKEY: [U]</span>
                   </div>
                   <p className="opacity-75 text-[11px] leading-relaxed">
-                    Click the <strong>[SYNC &amp; BACKUP]</strong> button in the top header anytime. 
-                    It saves your full routine, logged minutes, and history directly into your Google Drive vault using a lightweight 6-character Sync Code.
-                    No Google account logins or permission popups needed for users!
+                    Press <code className="text-white">[U]</code> or click <strong>[SYNC]</strong> in the header. Sync your schedule and logged minutes across desktop, laptop, and phone using a private 6-character Sync Code and Google Drive Webhook. No third-party accounts required!
                   </p>
                 </div>
 
@@ -301,7 +360,7 @@ export function SystemWalkthroughModal({
                     <span className="text-[9px] bg-white text-black font-black px-1.5 py-0.5">RECOMMENDED</span>
                   </div>
                   <p className="opacity-75 text-[11px] leading-relaxed">
-                    Remove all demo/placeholder hours and reset checkmarks so you can track 100% of your real effort starting today:
+                    Purge sample/placeholder hours and reset checkmarks so you can track 100% of your real effort starting today:
                   </p>
                   <button
                     onClick={handlePurge}
@@ -316,7 +375,7 @@ export function SystemWalkthroughModal({
         </div>
 
         {/* Modal Navigation Footer */}
-        <div className="bg-black border-t border-white p-3.5 flex items-center justify-between gap-3 text-xs">
+        <div className="bg-black border-t border-white p-3.5 flex items-center justify-between gap-3 text-xs shrink-0 font-mono">
           <button
             onClick={handlePrev}
             disabled={currentStep === 1}
