@@ -4,6 +4,7 @@ import {
   setVaultScriptUrl,
   isVaultConfigured,
 } from '../services/driveVaultService';
+import { getCustomShortcuts, isMatchingKey } from '../data/shortcutStore';
 
 interface SyncChoiceModalProps {
   isOpen: boolean;
@@ -35,6 +36,44 @@ export function SyncChoiceModal({
   const [currentUrl, setCurrentUrl] = useState<string>(() => getVaultScriptUrl());
   const [isEditingUrl, setIsEditingUrl] = useState<boolean>(() => !getVaultScriptUrl());
   const [urlInput, setUrlInput] = useState<string>(() => getVaultScriptUrl());
+
+  // Keydown listener to close Sync Menu on ESC or U
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+
+      if (e.key === 'Escape') {
+        if (isInput) {
+          target?.blur();
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+
+      const shortcuts = getCustomShortcuts();
+      if (isMatchingKey(e.key, shortcuts.open_sync)) {
+        if (!isInput) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+          return;
+        }
+      }
+
+      if (isInput) {
+        return;
+      }
+
+      e.stopPropagation();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

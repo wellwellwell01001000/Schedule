@@ -40,13 +40,27 @@
 
 ## 01 // QUICK START & HOTKEYS
 
-Use these single-key shortcuts from anywhere in the app to switch views instantly:
+Use these single-key shortcuts from anywhere in the app to navigate and control execution:
 
 ```
 [1] -> TRACKER       : Daily agenda, live stopwatch, checkmarks, new tasks
 [2] -> HIERARCHY     : Analytical drilldown (Months > Weeks > Days)
 [3] -> TASK AUDIT    : Aggregate time distribution ledger across all tasks
+[L] -> QUICK LOG     : Add +15m to current focus task
+[J] -> QUICK REDUCE  : Subtract -15m from current focus task (floored at 0m)
+[P] -> POMODORO      : Start / Pause active Pomodoro session
+[R] -> RESET POMO    : Reset Pomodoro timer to preset
+[SPACE] -> STOPWATCH : Start / Stop live stopwatch on current task
+[X] -> COMPLETE      : Toggle completed checkmark on current focus task
+[N] -> NEW TASK      : Open New Task specification panel
+[B] -> BULK INGEST   : Open multi-line task batch ingest
+[/] -> QUICK FILTER  : Search & filter active tasks
+[S] -> SETTINGS      : Open tabbed Settings Console
+[U] -> CLOUD SYNC    : Open Google Drive Cloud Sync Menu
+[K] or [?] -> CHEAT SHEET : Toggle keyboard shortcuts overlay
 ```
+
+> **★ CUSTOM HOTKEYS:** All keyboard shortcuts are fully customizable! Go to **Settings `[S]` ➔ `[6] System`** to rebind any hotkey or click **`[RESET ALL TO DEFAULTS]`** to restore factory settings anytime.
 
 ---
 

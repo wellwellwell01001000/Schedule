@@ -162,12 +162,16 @@ export function SystemWalkthroughModal({
 
                 <div className="border border-white/30 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <span className="font-bold text-white uppercase">[+15M] / [-15M] (QUICK LOG)</span>
-                    <p className="opacity-70 text-[11px]">Quickly increment tracked minutes if you completed a session offline or away from your computer.</p>
+                    <span className="font-bold text-white uppercase">[+15M] / [-15M] (QUICK LOG / REDUCE)</span>
+                    <p className="opacity-70 text-[11px]">Quickly increment or decrease (+15m / -15m) tracked minutes on active tasks with hotkeys [L] and [J].</p>
                   </div>
                   <span className="shrink-0 border border-white px-2 py-0.5 font-bold uppercase">
-                    +15 MINS
+                    +15M / -15M
                   </span>
+                </div>
+
+                <div className="border border-white/20 p-2.5 bg-white/5 text-[11px] opacity-80">
+                  ★ <strong>Custom Hotkeys</strong>: All keyboard shortcuts (Pomodoro, timers, views, creation, modals) can be rebound or reset anytime in <strong>Settings [S] &rarr; [6] System</strong>.
                 </div>
               </div>
             </div>

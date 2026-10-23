@@ -33,7 +33,10 @@ export function RecurringRoutinesManagerModal({
 
   if (!isOpen) return null;
 
-  const allRoutines = getAllUniqueRoutines(schedules);
+  // Filter to list ONLY repetitive/recurring routines, excluding one-time tasks
+  const allRoutines = getAllUniqueRoutines(schedules).filter(
+    (r) => r.sampleTask.isRepetitive !== false || r.days.length > 1
+  );
 
   const filtered = allRoutines.filter((r) => {
     if (filter === 'active') return !r.isAllDescheduled;

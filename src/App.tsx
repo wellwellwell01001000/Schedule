@@ -39,6 +39,7 @@ import {
   setVaultLastSync,
   getVaultLastSync,
 } from './services/driveVaultService';
+import { getCustomShortcuts, isMatchingKey } from './data/shortcutStore';
 import { ActiveTab, DaySchedule, MonthLogRecord } from './types';
 
 export default function App() {
@@ -203,51 +204,92 @@ export default function App() {
     setStoredSyncCode(newCode);
   };
 
+  const isAnyModalOpen =
+    isSettingsOpen ||
+    isSyncChoiceOpen ||
+    isShortcutsOpen ||
+    isBulkIngestOpen ||
+    isTemplatesOpen ||
+    isBackupOpen ||
+    isCategoryManagerOpen ||
+    isTutorialOpen;
+
   // Keyboard shortcut listener for terminal-style navigation and global actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Avoid intercepting when user is typing inside an input or textarea
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        if (e.key === 'Escape') {
+          target.blur();
+        }
         return;
       }
 
-      // K (or ?) : Cheat sheet overlay toggle
-      if (e.key === 'k' || e.key === 'K' || e.key === '?') {
+      const shortcuts = getCustomShortcuts();
+
+      // If Settings is open: only ESC or open_settings key closes it
+      if (isSettingsOpen) {
+        if (isMatchingKey(e.key, shortcuts.open_settings) || e.key === 'Escape') {
+          e.preventDefault();
+          setIsSettingsOpen(false);
+        }
+        return;
+      }
+
+      // If Sync Choice is open: only ESC or open_sync key closes it
+      if (isSyncChoiceOpen) {
+        if (isMatchingKey(e.key, shortcuts.open_sync) || e.key === 'Escape') {
+          e.preventDefault();
+          setIsSyncChoiceOpen(false);
+        }
+        return;
+      }
+
+      // If Cheatsheet is open: only ESC or open_shortcuts key closes it
+      if (isShortcutsOpen) {
+        if (isMatchingKey(e.key, shortcuts.open_shortcuts) || e.key === '?' || e.key === 'Escape') {
+          e.preventDefault();
+          setIsShortcutsOpen(false);
+        }
+        return;
+      }
+
+      // If any other modal is open: only ESC closes it
+      if (isBulkIngestOpen || isTemplatesOpen || isBackupOpen || isCategoryManagerOpen || isTutorialOpen) {
+        if (e.key === 'Escape') {
+          setIsBulkIngestOpen(false);
+          setIsTemplatesOpen(false);
+          setIsBackupOpen(false);
+          setIsCategoryManagerOpen(false);
+          setIsTutorialOpen(false);
+        }
+        return;
+      }
+
+      // --- When NO modal is open ---
+      // Cheat sheet overlay toggle
+      if (isMatchingKey(e.key, shortcuts.open_shortcuts) || e.key === '?') {
         e.preventDefault();
-        setIsShortcutsOpen((prev) => !prev);
+        setIsShortcutsOpen(true);
         return;
       }
 
-      // If a major modal is currently open, don't execute background navigation shortcuts
-      if (
-        isSettingsOpen ||
-        isBulkIngestOpen ||
-        isShortcutsOpen ||
-        isSyncChoiceOpen ||
-        isTemplatesOpen ||
-        isBackupOpen ||
-        isCategoryManagerOpen ||
-        isTutorialOpen
-      ) {
-        return;
-      }
+      // Navigation: Tracker, Hierarchy, Audit
+      if (isMatchingKey(e.key, shortcuts.nav_tracker)) setActiveView('tracker');
+      if (isMatchingKey(e.key, shortcuts.nav_hierarchy)) setActiveView('hierarchy');
+      if (isMatchingKey(e.key, shortcuts.nav_audit)) setActiveView('task_audit');
 
-      // [1], [2], [3] View Navigation
-      if (e.key === '1') setActiveView('tracker');
-      if (e.key === '2') setActiveView('hierarchy');
-      if (e.key === '3') setActiveView('task_audit');
-
-      // T: Jump to Today
-      if (e.key === 't' || e.key === 'T') {
+      // Jump to Today
+      if (isMatchingKey(e.key, shortcuts.jump_today)) {
         const todayKey = getDayKeyFromDate();
         setSelectedDay(todayKey);
         setSyncToast(`[JUMP TO TODAY]: Switched to ${todayKey.toUpperCase()}`);
         setTimeout(() => setSyncToast(null), 3000);
       }
 
-      // [ : Previous Day
-      if (e.key === '[') {
+      // Previous Day
+      if (isMatchingKey(e.key, shortcuts.prev_day)) {
         const DAYS_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
         const currentIdx = DAYS_ORDER.indexOf(selectedDay);
         const prevIdx = (currentIdx - 1 + 7) % 7;
@@ -255,8 +297,8 @@ export default function App() {
         setSelectedDay(newDay);
       }
 
-      // ] : Next Day
-      if (e.key === ']') {
+      // Next Day
+      if (isMatchingKey(e.key, shortcuts.next_day)) {
         const DAYS_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
         const currentIdx = DAYS_ORDER.indexOf(selectedDay);
         const nextIdx = (currentIdx + 1) % 7;
@@ -264,20 +306,20 @@ export default function App() {
         setSelectedDay(newDay);
       }
 
-      // S: Open Settings Console
-      if (e.key === 's' || e.key === 'S') {
+      // Open Settings Console
+      if (isMatchingKey(e.key, shortcuts.open_settings)) {
         e.preventDefault();
         setIsSettingsOpen(true);
       }
 
-      // B: Bulk Ingest
-      if (e.key === 'b' || e.key === 'B') {
+      // Bulk Ingest
+      if (isMatchingKey(e.key, shortcuts.bulk_ingest)) {
         e.preventDefault();
         setIsBulkIngestOpen(true);
       }
 
-      // U: Open Cloud Sync Menu (Choose Pull or Push)
-      if (e.key === 'u' || e.key === 'U') {
+      // Open Cloud Sync Menu
+      if (isMatchingKey(e.key, shortcuts.open_sync)) {
         e.preventDefault();
         setIsSyncChoiceOpen(true);
       }
@@ -295,7 +337,6 @@ export default function App() {
     isBackupOpen,
     isCategoryManagerOpen,
     isTutorialOpen,
-    handleUploadToCloud,
   ]);
 
   return (
@@ -343,6 +384,7 @@ export default function App() {
               onRefreshHistory={handleRefreshHistory}
               onOpenTemplates={() => setIsTemplatesOpen(true)}
               onOpenBulkIngest={() => setIsBulkIngestOpen(true)}
+              isAnyModalOpen={isAnyModalOpen}
             />
           )}
 

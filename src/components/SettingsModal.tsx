@@ -38,8 +38,23 @@ import {
   loadFromDriveVault,
   setLocalLastModified,
 } from '../services/driveVaultService';
+import {
+  getCustomSoundsConfig,
+  saveCustomSoundsConfig,
+  testCustomSound,
+  CustomSoundsConfig,
+} from '../data/soundStore';
+import {
+  getCustomShortcuts,
+  saveCustomShortcuts,
+  resetCustomShortcuts,
+  DEFAULT_SHORTCUT_ACTIONS,
+  DEFAULT_SHORTCUTS,
+  formatKeyDisplay,
+  ShortcutConfig,
+} from '../data/shortcutStore';
 
-export type SettingsTab = 'templates' | 'archive' | 'categories' | 'cloud' | 'system';
+export type SettingsTab = 'templates' | 'sounds' | 'archive' | 'categories' | 'cloud' | 'system';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -101,6 +116,59 @@ export function SettingsModal({
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [lastSyncStr, setLastSyncStr] = useState<string>('NEVER');
 
+  // --- Custom Sounds State ---
+  const [soundsConfig, setSoundsConfig] = useState<CustomSoundsConfig>(() =>
+    getCustomSoundsConfig()
+  );
+
+  const handleSoundFileUpload = (
+    type: 'task' | 'pomodoro' | 'break',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 8 * 1024 * 1024) {
+      showToast('[AUDIO ERROR]: File too large (>8MB). Please choose a shorter sound clip.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const updated = { ...soundsConfig };
+      if (type === 'task') updated.taskCompleteAudioUrl = dataUrl;
+      if (type === 'pomodoro') updated.pomodoroCompleteAudioUrl = dataUrl;
+      if (type === 'break') updated.breakCompleteAudioUrl = dataUrl;
+
+      setSoundsConfig(updated);
+      saveCustomSoundsConfig(updated);
+      showToast(`[CUSTOM AUDIO LOADED]: Audio saved for ${type.toUpperCase()}`);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSoundUrlSave = (type: 'task' | 'pomodoro' | 'break', url: string) => {
+    const updated = { ...soundsConfig };
+    if (type === 'task') updated.taskCompleteAudioUrl = url;
+    if (type === 'pomodoro') updated.pomodoroCompleteAudioUrl = url;
+    if (type === 'break') updated.breakCompleteAudioUrl = url;
+
+    setSoundsConfig(updated);
+    saveCustomSoundsConfig(updated);
+  };
+
+  const handleResetSound = (type: 'task' | 'pomodoro' | 'break') => {
+    const updated = { ...soundsConfig };
+    if (type === 'task') delete updated.taskCompleteAudioUrl;
+    if (type === 'pomodoro') delete updated.pomodoroCompleteAudioUrl;
+    if (type === 'break') delete updated.breakCompleteAudioUrl;
+
+    setSoundsConfig(updated);
+    saveCustomSoundsConfig(updated);
+    showToast(`[AUDIO RESET]: Restored synthesized chime for ${type.toUpperCase()}`);
+  };
+
   // Trigger toast banner inside modal
   const showToast = (msg: string) => {
     setToast(msg);
@@ -109,12 +177,34 @@ export function SettingsModal({
     }, 4000);
   };
 
+  // --- Custom Shortcuts State ---
+  const [shortcutsConfig, setShortcutsConfig] = useState<ShortcutConfig>(() =>
+    getCustomShortcuts()
+  );
+  const [editingShortcutId, setEditingShortcutId] = useState<keyof ShortcutConfig | null>(null);
+
+  const handleResetAllShortcuts = () => {
+    const defaultCfg = resetCustomShortcuts();
+    setShortcutsConfig(defaultCfg);
+    setEditingShortcutId(null);
+    showToast('[SHORTCUTS RESET]: All hotkeys restored to standard defaults.');
+  };
+
+  const handleResetSingleShortcut = (id: keyof ShortcutConfig) => {
+    const updated = saveCustomShortcuts({ [id]: DEFAULT_SHORTCUTS[id] });
+    setShortcutsConfig(updated);
+    showToast(`[HOTKEY RESTORED]: "${id}" set to default ${formatKeyDisplay(DEFAULT_SHORTCUTS[id])}`);
+  };
+
   // Synchronize state when modal opens
   useEffect(() => {
     if (isOpen) {
       setCategories(getCategories());
       setSnapshots(getSavedSnapshots());
       setCustomTemplates(getCustomTemplates());
+      setSoundsConfig(getCustomSoundsConfig());
+      setShortcutsConfig(getCustomShortcuts());
+      setEditingShortcutId(null);
       const currentCode = getOrCreateSyncCode();
       setSyncCode(currentCode);
       setCodeInput(currentCode);
@@ -128,29 +218,68 @@ export function SettingsModal({
     }
   }, [isOpen, initialTab]);
 
-  // Global keydown: ESC to close, 1-5 to switch tabs (if not typing in input)
+  // Global keydown: ESC or S/s to close, 1-6 to switch tabs (if not typing in input)
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Rebind Mode: Capture keypress for the active editing shortcut
+      if (editingShortcutId) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          setEditingShortcutId(null);
+          showToast('[REBIND CANCELLED]');
+          return;
+        }
+        const keyToSet = e.key === ' ' ? ' ' : e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        const updated = saveCustomShortcuts({ [editingShortcutId]: keyToSet });
+        setShortcutsConfig(updated);
+        setEditingShortcutId(null);
+        showToast(`[HOTKEY SAVED]: Rebound to ${formatKeyDisplay(keyToSet)}`);
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const isInput = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+
       if (e.key === 'Escape') {
+        if (isInput) {
+          target?.blur();
+        }
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
         return;
       }
-      const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+
+      const openSettingsKey = shortcutsConfig.open_settings || 's';
+      if (e.key.toLowerCase() === openSettingsKey.toLowerCase()) {
+        if (!isInput) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+          return;
+        }
+      }
+
+      if (isInput) {
         return;
       }
+
       if (e.key === '1') setActiveTab('templates');
-      if (e.key === '2') setActiveTab('archive');
-      if (e.key === '3') setActiveTab('categories');
-      if (e.key === '4') setActiveTab('cloud');
-      if (e.key === '5') setActiveTab('system');
+      if (e.key === '2') setActiveTab('sounds');
+      if (e.key === '3') setActiveTab('archive');
+      if (e.key === '4') setActiveTab('categories');
+      if (e.key === '5') setActiveTab('cloud');
+      if (e.key === '6') setActiveTab('system');
+
+      e.stopPropagation();
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose, shortcutsConfig, editingShortcutId]);
 
   if (!isOpen) return null;
 
@@ -427,7 +556,7 @@ export function SettingsModal({
           <button
             type="button"
             onClick={() => setActiveTab('templates')}
-            className={`px-4 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
               activeTab === 'templates'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
@@ -438,14 +567,29 @@ export function SettingsModal({
 
           <button
             type="button"
+            onClick={() => setActiveTab('sounds')}
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+              activeTab === 'sounds'
+                ? 'bg-white text-black font-black'
+                : 'text-white/80 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <span>[2] SOUNDS</span>
+            {(soundsConfig.taskCompleteAudioUrl || soundsConfig.pomodoroCompleteAudioUrl || soundsConfig.breakCompleteAudioUrl) && (
+              <span className="text-[9px] px-1 bg-white/20 font-mono">CUSTOM</span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('archive')}
-            className={`px-4 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
               activeTab === 'archive'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[2] ARCHIVE</span>
+            <span>[3] ARCHIVE</span>
             <span className="text-[10px] px-1 bg-white/20 text-white font-mono">
               {snapshots.length}
             </span>
@@ -454,13 +598,13 @@ export function SettingsModal({
           <button
             type="button"
             onClick={() => setActiveTab('categories')}
-            className={`px-4 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
               activeTab === 'categories'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[3] CATEGORIES</span>
+            <span>[4] CATEGORIES</span>
             <span className="text-[10px] px-1 bg-white/20 text-white font-mono">
               {categories.length}
             </span>
@@ -469,32 +613,32 @@ export function SettingsModal({
           <button
             type="button"
             onClick={() => setActiveTab('cloud')}
-            className={`px-4 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
               activeTab === 'cloud'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[4] CLOUD SYNC</span>
+            <span>[5] CLOUD SYNC</span>
             <span
               className={`text-[9px] px-1 font-mono ${
                 isVaultConfigured() ? 'bg-white text-black' : 'border border-white/50 text-white/60'
               }`}
             >
-              {isVaultConfigured() ? 'DRIVE_READY' : 'SETUP'}
+              {isVaultConfigured() ? 'READY' : 'SETUP'}
             </span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('system')}
-            className={`px-4 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-2.5 flex items-center gap-2 transition-none cursor-pointer whitespace-nowrap ${
               activeTab === 'system'
                 ? 'bg-white text-black font-black'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
           >
-            <span>[5] SYSTEM</span>
+            <span>[6] SYSTEM</span>
           </button>
         </div>
 
@@ -725,7 +869,193 @@ export function SettingsModal({
             </div>
           )}
 
-          {/* ===================== TAB 2: ARCHIVE ===================== */}
+          {/* ===================== TAB 2: SOUNDS & AUDIO ===================== */}
+          {activeTab === 'sounds' && (
+            <div className="space-y-6">
+              <div className="border border-white/30 p-4 bg-white/5 space-y-2">
+                <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                  <span className="font-bold text-sm uppercase text-white">
+                    _CUSTOM_AUDIO_CONFIGURATOR // OPTION B
+                  </span>
+                  <span className="text-[10px] opacity-60 font-mono">3 NOTIFICATION EVENTS</span>
+                </div>
+                <p className="text-xs opacity-70">
+                  Upload custom MP3/WAV/OGG audio files (or paste audio links) for each event.
+                  If no custom file is uploaded, system defaults to Web Audio API synthesized chimes.
+                </p>
+              </div>
+
+              {/* Event 1: Task Goal Met / Completion */}
+              <div className="border border-white/30 p-4 bg-black space-y-3">
+                <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-xs uppercase text-white block">
+                      1. TASK TARGET TIME MET / COMPLETED
+                    </span>
+                    <span className="text-[10px] opacity-60">Fires when tracked minutes reach planned estimate</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => testCustomSound('task_complete', soundsConfig.taskCompleteAudioUrl)}
+                    className="border border-white bg-white text-black hover:bg-white/90 px-3 py-1 text-xs font-bold uppercase transition-none cursor-pointer"
+                  >
+                    ▶ [TEST AUDIO]
+                  </button>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <label className="border border-white/50 bg-white/10 hover:bg-white hover:text-black px-3 py-1.5 cursor-pointer text-xs font-bold uppercase shrink-0">
+                      <span>[UPLOAD LOCAL FILE (.MP3/.WAV)]</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleSoundFileUpload('task', e)}
+                        className="hidden"
+                      />
+                    </label>
+                    <span className="text-[10px] opacity-50 uppercase">OR PASTE URL:</span>
+                    <input
+                      type="text"
+                      value={soundsConfig.taskCompleteAudioUrl || ''}
+                      onChange={(e) => handleSoundUrlSave('task', e.target.value)}
+                      placeholder="https://example.com/chime.mp3 or data:audio/mp3;base64,..."
+                      className="flex-1 w-full bg-black border border-white/40 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  {soundsConfig.taskCompleteAudioUrl && (
+                    <div className="flex items-center justify-between bg-white/10 p-2 text-[11px]">
+                      <span className="text-white font-bold uppercase truncate max-w-md">
+                        ✓ CUSTOM AUDIO LOADED
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleResetSound('task')}
+                        className="text-[10px] uppercase font-bold text-white/80 hover:text-white border border-white/40 px-2 py-0.5 cursor-pointer"
+                      >
+                        [RESET TO DEFAULT CHIME]
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Event 2: Pomodoro Focus Session Complete */}
+              <div className="border border-white/30 p-4 bg-black space-y-3">
+                <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-xs uppercase text-white block">
+                      2. POMODORO FOCUS ROUND COMPLETE
+                    </span>
+                    <span className="text-[10px] opacity-60">Fires when 25m or 50m work session reaches 00:00</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => testCustomSound('pomodoro_complete', soundsConfig.pomodoroCompleteAudioUrl)}
+                    className="border border-white bg-white text-black hover:bg-white/90 px-3 py-1 text-xs font-bold uppercase transition-none cursor-pointer"
+                  >
+                    ▶ [TEST AUDIO]
+                  </button>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <label className="border border-white/50 bg-white/10 hover:bg-white hover:text-black px-3 py-1.5 cursor-pointer text-xs font-bold uppercase shrink-0">
+                      <span>[UPLOAD LOCAL FILE (.MP3/.WAV)]</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleSoundFileUpload('pomodoro', e)}
+                        className="hidden"
+                      />
+                    </label>
+                    <span className="text-[10px] opacity-50 uppercase">OR PASTE URL:</span>
+                    <input
+                      type="text"
+                      value={soundsConfig.pomodoroCompleteAudioUrl || ''}
+                      onChange={(e) => handleSoundUrlSave('pomodoro', e.target.value)}
+                      placeholder="https://example.com/focus_end.mp3 or data:audio/mp3;base64,..."
+                      className="flex-1 w-full bg-black border border-white/40 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  {soundsConfig.pomodoroCompleteAudioUrl && (
+                    <div className="flex items-center justify-between bg-white/10 p-2 text-[11px]">
+                      <span className="text-white font-bold uppercase truncate max-w-md">
+                        ✓ CUSTOM AUDIO LOADED
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleResetSound('pomodoro')}
+                        className="text-[10px] uppercase font-bold text-white/80 hover:text-white border border-white/40 px-2 py-0.5 cursor-pointer"
+                      >
+                        [RESET TO DEFAULT CHIME]
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Event 3: Break Session Complete */}
+              <div className="border border-white/30 p-4 bg-black space-y-3">
+                <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-xs uppercase text-white block">
+                      3. BREAK SESSION COMPLETE
+                    </span>
+                    <span className="text-[10px] opacity-60">Fires when 5m or 15m break session reaches 00:00</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => testCustomSound('break_complete', soundsConfig.breakCompleteAudioUrl)}
+                    className="border border-white bg-white text-black hover:bg-white/90 px-3 py-1 text-xs font-bold uppercase transition-none cursor-pointer"
+                  >
+                    ▶ [TEST AUDIO]
+                  </button>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <label className="border border-white/50 bg-white/10 hover:bg-white hover:text-black px-3 py-1.5 cursor-pointer text-xs font-bold uppercase shrink-0">
+                      <span>[UPLOAD LOCAL FILE (.MP3/.WAV)]</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) => handleSoundFileUpload('break', e)}
+                        className="hidden"
+                      />
+                    </label>
+                    <span className="text-[10px] opacity-50 uppercase">OR PASTE URL:</span>
+                    <input
+                      type="text"
+                      value={soundsConfig.breakCompleteAudioUrl || ''}
+                      onChange={(e) => handleSoundUrlSave('break', e.target.value)}
+                      placeholder="https://example.com/break_end.mp3 or data:audio/mp3;base64,..."
+                      className="flex-1 w-full bg-black border border-white/40 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  {soundsConfig.breakCompleteAudioUrl && (
+                    <div className="flex items-center justify-between bg-white/10 p-2 text-[11px]">
+                      <span className="text-white font-bold uppercase truncate max-w-md">
+                        ✓ CUSTOM AUDIO LOADED
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleResetSound('break')}
+                        className="text-[10px] uppercase font-bold text-white/80 hover:text-white border border-white/40 px-2 py-0.5 cursor-pointer"
+                      >
+                        [RESET TO DEFAULT CHIME]
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================== TAB 3: ARCHIVE ===================== */}
           {activeTab === 'archive' && (
             <div className="space-y-6">
               <div className="border border-white/30 p-3 bg-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 overflow-hidden">
@@ -1140,32 +1470,94 @@ export function SettingsModal({
                 </button>
               </div>
 
-              {/* Keyboard Shortcuts Table */}
-              <div className="space-y-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-white block">
-                  KEYBOARD SHORTCUTS REFERENCE:
-                </span>
-                <div className="border border-white/30 text-xs divide-y divide-white/20">
-                  <div className="p-2 flex justify-between">
-                    <span className="font-bold text-white">[1]</span>
-                    <span className="text-white/70">Switch to Timeline Tracker View</span>
+              {/* Keyboard Shortcuts Customizer Manager */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/20 pb-2">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-white block">
+                      CUSTOMIZABLE KEYBOARD SHORTCUTS:
+                    </span>
+                    <span className="text-[11px] text-white/60">
+                      Click [EDIT] to rebind any shortcut. Press key when prompt appears.
+                    </span>
                   </div>
-                  <div className="p-2 flex justify-between">
-                    <span className="font-bold text-white">[2]</span>
-                    <span className="text-white/70">Switch to Hierarchy Metrics View</span>
-                  </div>
-                  <div className="p-2 flex justify-between">
-                    <span className="font-bold text-white">[3]</span>
-                    <span className="text-white/70">Switch to Task Time Audit View</span>
-                  </div>
-                  <div className="p-2 flex justify-between">
-                    <span className="font-bold text-white">[ESC]</span>
-                    <span className="text-white/70">Close Settings Console or Open Modals</span>
-                  </div>
-                  <div className="p-2 flex justify-between">
-                    <span className="font-bold text-white">[ENTER]</span>
-                    <span className="text-white/70">Submit task, category, or time input</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetAllShortcuts}
+                    className="border border-white/60 text-white hover:bg-white hover:text-black px-3 py-1 text-[10px] font-bold uppercase transition-none cursor-pointer shrink-0"
+                    title="Restore all keyboard shortcuts to system defaults"
+                  >
+                    [RESET ALL TO DEFAULTS]
+                  </button>
+                </div>
+
+                <div className="border border-white/30 text-xs divide-y divide-white/20 bg-black">
+                  {DEFAULT_SHORTCUT_ACTIONS.map((action) => {
+                    const currentKey = shortcutsConfig[action.id] || action.defaultKey;
+                    const isEditing = editingShortcutId === action.id;
+                    const isModified = currentKey !== action.defaultKey;
+
+                    return (
+                      <div
+                        key={action.id}
+                        className={`p-2.5 flex items-center justify-between gap-3 ${
+                          isEditing ? 'bg-white/10 border-y border-white' : 'hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className="text-white/80 font-medium truncate">
+                            {action.label}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Current Key Badge */}
+                          <span
+                            className={`font-mono font-bold px-2 py-0.5 border text-xs uppercase ${
+                              isEditing
+                                ? 'bg-white text-black border-white animate-pulse'
+                                : isModified
+                                ? 'bg-white/20 text-white border-white'
+                                : 'bg-black text-white border-white/40'
+                            }`}
+                          >
+                            {isEditing ? '[PRESS ANY KEY...]' : formatKeyDisplay(currentKey)}
+                          </span>
+
+                          {/* Rebind / Edit Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isEditing) {
+                                setEditingShortcutId(null);
+                              } else {
+                                setEditingShortcutId(action.id);
+                              }
+                            }}
+                            className={`px-2 py-0.5 text-[10px] font-bold uppercase transition-none cursor-pointer border ${
+                              isEditing
+                                ? 'border-white bg-white text-black'
+                                : 'border-white/60 text-white hover:bg-white hover:text-black'
+                            }`}
+                          >
+                            {isEditing ? '[CANCEL]' : '[EDIT]'}
+                          </button>
+
+                          {/* Reset Single Shortcut Button if Modified */}
+                          {isModified && (
+                            <button
+                              type="button"
+                              onClick={() => handleResetSingleShortcut(action.id)}
+                              className="border border-white/40 text-white/60 hover:text-white hover:border-white px-2 py-0.5 text-[10px] font-mono transition-none cursor-pointer"
+                              title={`Reset to default (${formatKeyDisplay(action.defaultKey)})`}
+                            >
+                              [RESET]
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

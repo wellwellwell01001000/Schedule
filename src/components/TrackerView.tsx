@@ -12,6 +12,8 @@ import {
   cleanZeroHourTasksFromHistory,
 } from '../data/historyStore';
 import { PomodoroTimer, PomodoroTimerHandle } from './PomodoroTimer';
+import { playCustomOrFallbackSound } from '../data/soundStore';
+import { getCustomShortcuts, isMatchingKey } from '../data/shortcutStore';
 import {
   findRoutineMatches,
   applyDeschedule,
@@ -40,8 +42,8 @@ interface TrackerViewProps {
   onRefreshHistory: () => void;
   onOpenTemplates?: () => void;
   onOpenBulkIngest?: () => void;
+  isAnyModalOpen?: boolean;
 }
-
 
 export function TrackerView({
   selectedDay,
@@ -51,6 +53,7 @@ export function TrackerView({
   onRefreshHistory,
   onOpenTemplates,
   onOpenBulkIngest,
+  isAnyModalOpen,
 }: TrackerViewProps) {
   const currentSchedule = schedules[selectedDay] || schedules['mon'];
   const todayKey = getDayKeyFromDate();
@@ -344,9 +347,19 @@ export function TrackerView({
   // Adjust tracked time manually on task for this specific calendar date
   const handleAdjustTime = (taskId: string, deltaMinutes: number, e?: React.MouseEvent) => {
     e?.stopPropagation?.();
+    const prevTime = dateTrackedTimeMap[taskId] || 0;
     const updatedMap = addTimeToDateTask(selectedDateStr, taskId, deltaMinutes);
+    const newTime = updatedMap[taskId] || 0;
     setDateTrackedTimeMap({ ...updatedMap });
     setLocalLastModified();
+
+    // Trigger audio chime if task duration estimate is reached or surpassed for the first time
+    const targetTask = activeDayTasks.find((t) => t.id === taskId);
+    if (targetTask && targetTask.durationMinutes > 0) {
+      if (prevTime < targetTask.durationMinutes && newTime >= targetTask.durationMinutes) {
+        playCustomOrFallbackSound('task_complete');
+      }
+    }
 
     // Attach updated date-scoped time spent for syncing to history
     const tasksWithDateTrackedTime = activeDayTasks.map((t) => ({
@@ -434,6 +447,33 @@ export function TrackerView({
         }
       }
       setActiveTimerTaskId(taskId);
+      setTimerSeconds(0);
+    }
+  };
+
+  // Helper to start live stopwatch timer on a specific task ID (called by Pomodoro start)
+  const handleStartLiveStopwatchOnTask = (taskId: string) => {
+    if (!taskId) return;
+    if (activeTimerTaskId !== taskId) {
+      if (activeTimerTaskId && timerSeconds > 0) {
+        const mins = Math.round(timerSeconds / 60);
+        if (mins > 0) {
+          handleAdjustTime(activeTimerTaskId, mins);
+        }
+      }
+      setActiveTimerTaskId(taskId);
+      setTimerSeconds(0);
+    }
+  };
+
+  // Helper to pause live stopwatch timer (called by Pomodoro pause/reset)
+  const handlePauseLiveStopwatch = () => {
+    if (activeTimerTaskId) {
+      const additionalMinutes = Math.round(timerSeconds / 60);
+      if (additionalMinutes > 0) {
+        handleAdjustTime(activeTimerTaskId, additionalMinutes);
+      }
+      setActiveTimerTaskId(null);
       setTimerSeconds(0);
     }
   };
@@ -603,14 +643,31 @@ export function TrackerView({
   // Keyboard shortcuts listener for Tracker View actions: Space (Timer), X (Done), L (+15m), R (Reset), N (New), / (Filter)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept when user is typing inside an input or textarea
-      const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+      // Handle Esc key when N task specification panel is open -> close panel!
+      if (isAddingTask && e.key === 'Escape') {
+        e.preventDefault();
+        setIsAddingTask(false);
         return;
       }
 
-      // Space: Start / Stop Stopwatch on current focus task
-      if (e.key === ' ' || e.code === 'Space') {
+      // Do NOT process background shortcuts when N Task Panel or any modal is open
+      if (
+        isAnyModalOpen ||
+        isAddingTask ||
+        isEditModalOpen ||
+        isConfirmRemoveAllOpen ||
+        isCycleActionsOpen ||
+        actionModalOpen ||
+        isManagerOpen ||
+        timeEditTargetTask !== null
+      ) {
+        return;
+      }
+
+      const shortcuts = getCustomShortcuts();
+
+      // Start / Stop Stopwatch on current focus task
+      if (isMatchingKey(e.key, shortcuts.toggle_timer)) {
         e.preventDefault();
         if (activeTimerTaskId) {
           // Stop running timer and credit accumulated time
@@ -634,8 +691,8 @@ export function TrackerView({
         }
       }
 
-      // X: Toggle Complete on current directive task
-      if (e.key === 'x' || e.key === 'X') {
+      // Toggle Complete on current directive task
+      if (isMatchingKey(e.key, shortcuts.toggle_complete)) {
         if (currentFocusTask) {
           e.preventDefault();
           toggleTaskCompletion(currentFocusTask.id);
@@ -649,8 +706,8 @@ export function TrackerView({
         }
       }
 
-      // L: Quick log time (+15m) to current directive task
-      if (e.key === 'l' || e.key === 'L') {
+      // Quick log time (+15m) to current directive task
+      if (isMatchingKey(e.key, shortcuts.log_time)) {
         if (currentFocusTask) {
           e.preventDefault();
           handleAdjustTime(currentFocusTask.id, 15);
@@ -660,29 +717,44 @@ export function TrackerView({
         }
       }
 
-      // P: Start / Pause Pomodoro session (attached by default to current task or "Start Late" in focus)
-      if (e.key === 'p' || e.key === 'P') {
+      // Quick reduce time (-15m) from current directive task
+      if (isMatchingKey(e.key, shortcuts.reduce_time)) {
+        if (currentFocusTask) {
+          e.preventDefault();
+          const currentLogged = dateTrackedTimeMap[currentFocusTask.id] || 0;
+          if (currentLogged > 0) {
+            handleAdjustTime(currentFocusTask.id, -15);
+            const totalNow = Math.max(0, currentLogged - 15);
+            setToastMessage(`[-15M REDUCED]: "${currentFocusTask.title}" now has ${totalNow}m tracked`);
+          } else {
+            setToastMessage(`[0M TRACKED]: "${currentFocusTask.title}" is already at 0m`);
+          }
+          setTimeout(() => setToastMessage(null), 3000);
+        }
+      }
+
+      // Start / Pause Pomodoro session (operating on whichever task is currently selected in dropdown)
+      if (isMatchingKey(e.key, shortcuts.pomodoro_play_pause)) {
         e.preventDefault();
-        const targetTask = currentFocusTask || scheduledTasks[0];
-        const isNowRunning = pomodoroRef.current?.togglePlayPause(targetTask?.id);
+        const isNowRunning = pomodoroRef.current?.togglePlayPause();
         setToastMessage(
           isNowRunning
-            ? `[POMODORO RUNNING]: Attached to "${targetTask?.title || 'task'}"`
-            : '[POMODORO PAUSED]'
+            ? '[POMODORO STARTED]: Session running'
+            : '[POMODORO PAUSED]: Elapsed time logged to task'
         );
         setTimeout(() => setToastMessage(null), 3000);
       }
 
-      // R: Reset Pomodoro Timer to preset duration
-      if (e.key === 'r' || e.key === 'R') {
+      // Reset Pomodoro Timer to preset duration
+      if (isMatchingKey(e.key, shortcuts.pomodoro_reset)) {
         e.preventDefault();
         pomodoroRef.current?.reset();
         setToastMessage('[POMODORO RESET]: Timer reset to preset');
         setTimeout(() => setToastMessage(null), 3000);
       }
 
-      // N: Add new task
-      if (e.key === 'n' || e.key === 'N') {
+      // Add new task
+      if (isMatchingKey(e.key, shortcuts.add_task)) {
         e.preventDefault();
         setIsAddingTask(true);
         setTimeout(() => {
@@ -690,8 +762,8 @@ export function TrackerView({
         }, 50);
       }
 
-      // /: Quick Filter Search
-      if (e.key === '/') {
+      // Quick Filter Search
+      if (isMatchingKey(e.key, shortcuts.quick_filter)) {
         e.preventDefault();
         filterInputRef.current?.focus();
       }
@@ -700,6 +772,14 @@ export function TrackerView({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    isAnyModalOpen,
+    isAddingTask,
+    isEditModalOpen,
+    isConfirmRemoveAllOpen,
+    isCycleActionsOpen,
+    actionModalOpen,
+    isManagerOpen,
+    timeEditTargetTask,
     activeTimerTaskId,
     timerSeconds,
     currentFocusTask,
@@ -933,14 +1013,27 @@ export function TrackerView({
         </div>
       )}
 
-      {/* Inline Form: Add New Task */}
+      {/* Sliding Task Specification Panel */}
       {isAddingTask && (
-        <div className="border-2 border-white bg-black p-4 md:p-6 space-y-4">
+        <div className="border-2 border-white bg-black p-4 md:p-6 space-y-4 shadow-2xl transition-all duration-300 ease-in-out border-l-4 border-l-white">
           <div className="border-b border-white pb-2 flex items-center justify-between">
-            <span className="text-sm font-bold uppercase tracking-tight text-white">
-              _NEW_TASK_SPECIFICATION // ADD TO SCHEDULE
-            </span>
-            <span className="text-[10px] opacity-60">TARGET DAY: {currentSchedule.dayName.toUpperCase()}</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-white inline-block animate-pulse" />
+              <span className="text-sm font-bold uppercase tracking-tight text-white">
+                _NEW_TASK_SPECIFICATION // ADD TO SCHEDULE
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] opacity-60">TARGET DAY: {currentSchedule.dayName.toUpperCase()}</span>
+              <button
+                type="button"
+                onClick={() => setIsAddingTask(false)}
+                className="border border-white bg-black hover:bg-white hover:text-black px-2.5 py-0.5 text-xs font-bold uppercase transition-none cursor-pointer"
+                title="Close Task Specification Panel (Hotkey: Esc)"
+              >
+                [X CLOSE (ESC)]
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleAddTaskSubmit} className="space-y-4 text-xs">
@@ -1765,6 +1858,8 @@ export function TrackerView({
             onLogMinutesToTask={(taskId, mins) => {
               handleAdjustTime(taskId, mins);
             }}
+            onStartLiveStopwatch={handleStartLiveStopwatchOnTask}
+            onPauseLiveStopwatch={handlePauseLiveStopwatch}
           />
         </section>
       </div>

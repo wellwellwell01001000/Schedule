@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { TaskItem } from '../types';
+import { playCustomOrFallbackSound } from '../data/soundStore';
 import { generateAsciiProgressBar } from '../utils/ascii';
 
 export interface PomodoroTimerHandle {
-  togglePlayPause: (defaultTaskId?: string) => boolean;
+  togglePlayPause: () => boolean;
   reset: () => void;
   attachTask: (taskId: string) => void;
   isRunning: () => boolean;
@@ -13,15 +14,18 @@ interface PomodoroTimerProps {
   scheduledTasks: TaskItem[];
   activeFocusTaskId?: string;
   onLogMinutesToTask: (taskId: string, minutes: number) => void;
+  onStartLiveStopwatch?: (taskId: string) => void;
+  onPauseLiveStopwatch?: () => void;
 }
 
 type SessionPreset = 'focus_25' | 'deep_50' | 'short_break' | 'long_break';
 
 export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>(
   function PomodoroTimer(
-    { scheduledTasks, activeFocusTaskId, onLogMinutesToTask },
+    { scheduledTasks, activeFocusTaskId, onLogMinutesToTask, onStartLiveStopwatch, onPauseLiveStopwatch },
     ref
   ) {
+    // Dropdown selection - defaults to active focus task or first scheduled task
     const [selectedTaskId, setSelectedTaskId] = useState<string>(() => {
       return activeFocusTaskId || scheduledTasks[0]?.id || '';
     });
@@ -33,34 +37,90 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
     const [pomodoroCount, setPomodoroCount] = useState<number>(0);
     const [justCompletedAlert, setJustCompletedAlert] = useState<string | null>(null);
 
+    // Track starting seconds for current running round to auto-log exact elapsed minutes on pause/reset
+    const roundStartLeftSecondsRef = useRef<number>(25 * 60);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Sync selected task when idle if activeFocusTaskId changes (current task or "Start Late" overdue task)
+    // Keep active focus task synced in dropdown when idle if user hasn't selected another task
+    const prevActiveFocusRef = useRef<string | undefined>(activeFocusTaskId);
     useEffect(() => {
       if (!isRunning && activeFocusTaskId) {
-        setSelectedTaskId(activeFocusTaskId);
+        if (!selectedTaskId || selectedTaskId === prevActiveFocusRef.current) {
+          setSelectedTaskId(activeFocusTaskId);
+        }
       }
-    }, [activeFocusTaskId, isRunning]);
+      prevActiveFocusRef.current = activeFocusTaskId;
+    }, [activeFocusTaskId, isRunning, selectedTaskId]);
+
+    // Ensure selectedTaskId falls back to first scheduled task if current selection is invalid
+    useEffect(() => {
+      if (scheduledTasks.length > 0 && (!selectedTaskId || !scheduledTasks.some((t) => t.id === selectedTaskId))) {
+        setSelectedTaskId(scheduledTasks[0].id);
+      }
+    }, [scheduledTasks, selectedTaskId]);
+
+    // Helper to log accumulated elapsed minutes worked in the current Pomodoro round
+    const logElapsedMinutesForCurrentRound = () => {
+      const elapsedSecondsInRound = roundStartLeftSecondsRef.current - timeLeftSeconds;
+      const elapsedMinutes = Math.round(elapsedSecondsInRound / 60);
+      const isWorkSession = preset === 'focus_25' || preset === 'deep_50';
+
+      if (elapsedMinutes > 0 && isWorkSession && selectedTaskId) {
+        onLogMinutesToTask(selectedTaskId, elapsedMinutes);
+        roundStartLeftSecondsRef.current = timeLeftSeconds;
+        const targetTask = scheduledTasks.find((t) => t.id === selectedTaskId);
+        return { elapsedMinutes, taskTitle: targetTask?.title || 'TASK' };
+      }
+      return null;
+    };
+
+    // Toggle Play/Pause on whichever task is currently selected in the "Attach to Scheduled Task" dropdown
+    const handleTogglePlayPause = (): boolean => {
+      if (isRunning) {
+        // Pausing: Auto-log elapsed time worked in this round to the selected task
+        const logged = logElapsedMinutesForCurrentRound();
+        setIsRunning(false);
+        onPauseLiveStopwatch?.();
+        if (logged) {
+          setJustCompletedAlert(`[AUTOLOG ON PAUSE]: ${logged.elapsedMinutes}m credited to "${logged.taskTitle}"`);
+        }
+        return false;
+      } else {
+        // Starting: Ensure roundStartLeftSeconds matches current timeLeftSeconds
+        roundStartLeftSecondsRef.current = timeLeftSeconds;
+        setIsRunning(true);
+        // Start live stopwatch on the selected task simultaneously
+        if (selectedTaskId) {
+          onStartLiveStopwatch?.(selectedTaskId);
+        }
+        return true;
+      }
+    };
+
+    // Reset Pomodoro timer: auto-log any uncommitted elapsed minutes, then reset to preset
+    const handleReset = () => {
+      const logged = logElapsedMinutesForCurrentRound();
+      setIsRunning(false);
+      onPauseLiveStopwatch?.();
+      const resetSeconds = targetDurationMinutes * 60;
+      setTimeLeftSeconds(resetSeconds);
+      roundStartLeftSecondsRef.current = resetSeconds;
+
+      if (logged) {
+        setJustCompletedAlert(`[RESET & LOGGED]: ${logged.elapsedMinutes}m credited to "${logged.taskTitle}"`);
+      } else {
+        setJustCompletedAlert(`[TIMER RESET]: Reset to ${targetDurationMinutes}m`);
+        setTimeout(() => setJustCompletedAlert(null), 2500);
+      }
+    };
 
     // Imperative handle for keyboard shortcuts (P to toggle, R to reset)
     useImperativeHandle(ref, () => ({
-      togglePlayPause: (defaultTaskId?: string) => {
-        if (isRunning) {
-          setIsRunning(false);
-          return false;
-        } else {
-          const target = defaultTaskId || activeFocusTaskId || selectedTaskId;
-          if (target) {
-            setSelectedTaskId(target);
-          }
-          setIsRunning(true);
-          return true;
-        }
+      togglePlayPause: () => {
+        return handleTogglePlayPause();
       },
       reset: () => {
-        setIsRunning(false);
-        setTimeLeftSeconds(targetDurationMinutes * 60);
-        setJustCompletedAlert(null);
+        handleReset();
       },
       attachTask: (taskId: string) => {
         setSelectedTaskId(taskId);
@@ -68,7 +128,7 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
       isRunning: () => isRunning,
     }));
 
-    // Audio chime tone using browser Web Audio API
+    // Audio chime tone fallback using browser Web Audio API
     const playChime = () => {
       try {
         const AudioCtx =
@@ -79,8 +139,8 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
         const gain = ctx.createGain();
 
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
-        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15);
 
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
@@ -96,7 +156,9 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
 
     // Switch preset
     const handleSelectPreset = (newPreset: SessionPreset) => {
+      logElapsedMinutesForCurrentRound();
       setIsRunning(false);
+      onPauseLiveStopwatch?.();
       setPreset(newPreset);
       let mins = 25;
       if (newPreset === 'focus_25') mins = 25;
@@ -105,7 +167,9 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
       if (newPreset === 'long_break') mins = 15;
 
       setTargetDurationMinutes(mins);
-      setTimeLeftSeconds(mins * 60);
+      const newSeconds = mins * 60;
+      setTimeLeftSeconds(newSeconds);
+      roundStartLeftSecondsRef.current = newSeconds;
       setJustCompletedAlert(null);
     };
 
@@ -117,22 +181,30 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
             if (prev <= 1) {
               // Completed!
               setIsRunning(false);
+              onPauseLiveStopwatch?.();
               playChime();
 
               const isWorkSession = preset === 'focus_25' || preset === 'deep_50';
               if (isWorkSession) {
+                playCustomOrFallbackSound('pomodoro_complete');
                 setPomodoroCount((c) => c + 1);
+
+                // Auto-log full session duration to selected task
+                const elapsedSecondsInRound = roundStartLeftSecondsRef.current - 0;
+                const elapsedMinutes = Math.max(1, Math.round(elapsedSecondsInRound / 60));
                 if (selectedTaskId) {
-                  onLogMinutesToTask(selectedTaskId, targetDurationMinutes);
+                  onLogMinutesToTask(selectedTaskId, elapsedMinutes);
                 }
                 const targetTask = scheduledTasks.find((t) => t.id === selectedTaskId);
                 setJustCompletedAlert(
-                  `COMPLETED ${targetDurationMinutes}m FOCUS // LOGGED TO: ${targetTask?.title || 'TASK'}`
+                  `COMPLETED ${elapsedMinutes}m FOCUS // LOGGED TO: ${targetTask?.title || 'TASK'}`
                 );
               } else {
+                playCustomOrFallbackSound('break_complete');
                 setJustCompletedAlert(`BREAK FINISHED // READY FOR NEXT FOCUS ROUND`);
               }
 
+              roundStartLeftSecondsRef.current = 0;
               return 0;
             }
             return prev - 1;
@@ -145,26 +217,21 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
       return () => {
         if (timerRef.current) clearInterval(timerRef.current);
       };
-    }, [isRunning, preset, selectedTaskId, targetDurationMinutes, onLogMinutesToTask, scheduledTasks]);
+    }, [isRunning, preset, selectedTaskId, targetDurationMinutes, onLogMinutesToTask, scheduledTasks, onPauseLiveStopwatch]);
 
     // Handle manual log & finish early
     const handleFinishEarly = () => {
+      const logged = logElapsedMinutesForCurrentRound();
       setIsRunning(false);
-      const elapsedSeconds = targetDurationMinutes * 60 - timeLeftSeconds;
-      const elapsedMinutes = Math.round(elapsedSeconds / 60);
+      onPauseLiveStopwatch?.();
 
-      if (elapsedMinutes > 0 && (preset === 'focus_25' || preset === 'deep_50') && selectedTaskId) {
-        onLogMinutesToTask(selectedTaskId, elapsedMinutes);
-        setJustCompletedAlert(`EARLY LOG: ${elapsedMinutes}m CREDITED TO TASK`);
+      if (logged) {
+        setJustCompletedAlert(`EARLY LOG: ${logged.elapsedMinutes}m CREDITED TO "${logged.taskTitle}"`);
       }
 
-      setTimeLeftSeconds(targetDurationMinutes * 60);
-    };
-
-    const handleReset = () => {
-      setIsRunning(false);
-      setTimeLeftSeconds(targetDurationMinutes * 60);
-      setJustCompletedAlert(null);
+      const resetSeconds = targetDurationMinutes * 60;
+      setTimeLeftSeconds(resetSeconds);
+      roundStartLeftSecondsRef.current = resetSeconds;
     };
 
     const minutesDisplay = Math.floor(timeLeftSeconds / 60);
@@ -186,7 +253,6 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
             <span>_POMODORO_SESSION_ENGINE</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono hidden sm:inline opacity-70">[P: PLAY/PAUSE, R: RESET]</span>
             <span className="text-[10px] font-mono font-bold">
               [{pomodoroCount} CYCLES]
             </span>
@@ -194,16 +260,21 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
         </div>
 
         <div className="p-4 space-y-3 font-mono text-white text-xs">
-          {/* Task Selection */}
+          {/* Task Selection Dropdown */}
           <div className="space-y-1">
-            <label className="text-[10px] opacity-60 uppercase font-bold block">
-              ATTACH TO SCHEDULED TASK:
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] opacity-60 uppercase font-bold block">
+                ATTACH TO SCHEDULED TASK:
+              </label>
+              <span className="text-[9px] text-white/50 uppercase">
+                {isRunning ? 'LOCKED DURING SESSION' : 'SELECT TARGET TASK'}
+              </span>
+            </div>
             <select
               value={selectedTaskId}
               onChange={(e) => setSelectedTaskId(e.target.value)}
               disabled={isRunning}
-              className="w-full bg-black border border-white/50 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none disabled:opacity-50 uppercase"
+              className="w-full bg-black border border-white/50 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none disabled:opacity-50 uppercase cursor-pointer"
             >
               {scheduledTasks.length === 0 ? (
                 <option value="">NO ACTIVE SCHEDULED TASKS</option>
@@ -290,14 +361,7 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
           {/* Controls */}
           <div className="flex items-center gap-2 pt-1">
             <button
-              onClick={() => {
-                if (isRunning) {
-                  setIsRunning(false);
-                } else {
-                  if (activeFocusTaskId) setSelectedTaskId(activeFocusTaskId);
-                  setIsRunning(true);
-                }
-              }}
+              onClick={handleTogglePlayPause}
               className={`flex-1 py-1.5 text-xs font-bold border transition-none cursor-pointer uppercase ${
                 isRunning
                   ? 'bg-black text-white border-white animate-pulse'
@@ -310,7 +374,7 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
             <button
               onClick={handleReset}
               className="border border-white/40 px-2.5 py-1.5 text-xs text-white hover:bg-white hover:text-black transition-none cursor-pointer font-bold uppercase"
-              title="Reset Pomodoro Timer (Hotkey: R)"
+              title="Reset Pomodoro Timer & Auto-Log Elapsed Worked Time (Hotkey: R)"
             >
               [RESET (R)]
             </button>

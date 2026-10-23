@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { getCustomShortcuts, formatKeyDisplay, ShortcutConfig } from '../data/shortcutStore';
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean;
@@ -7,16 +8,34 @@ interface KeyboardShortcutsModalProps {
 }
 
 export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
+  const [cfg, setCfg] = useState<ShortcutConfig>(() => getCustomShortcuts());
+
+  useEffect(() => {
+    if (isOpen) {
+      setCfg(getCustomShortcuts());
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
+    const openShortcutsKey = cfg.open_shortcuts || 'k';
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'k' || e.key === 'K' || e.key === '?') {
+      if (
+        e.key === 'Escape' ||
+        e.key.toLowerCase() === openShortcutsKey.toLowerCase() ||
+        e.key === '?'
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
+        return;
       }
+      e.stopPropagation();
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose, cfg]);
 
   if (!isOpen) return null;
 
@@ -39,7 +58,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
             <span className="tracking-wider">_KEYBOARD_SHORTCUTS_CHEAT_SHEET</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[10px] opacity-70 hidden sm:inline">[PRESS ESC OR K TO DISMISS]</span>
+            <span className="text-[10px] opacity-70 hidden sm:inline">[PRESS ESC OR {formatKeyDisplay(cfg.open_shortcuts)} TO DISMISS]</span>
             <button
               type="button"
               onClick={onClose}
@@ -65,19 +84,19 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [T]
+                    {formatKeyDisplay(cfg.jump_today)}
                   </span>
                   <span className="text-white/80">Jump to Today</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [ [ ] / [ ] ]
+                    {formatKeyDisplay(cfg.prev_day)} / {formatKeyDisplay(cfg.next_day)}
                   </span>
                   <span className="text-white/80">Previous / Next Day</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [1] / [2] / [3]
+                    {formatKeyDisplay(cfg.nav_tracker)} / {formatKeyDisplay(cfg.nav_hierarchy)} / {formatKeyDisplay(cfg.nav_audit)}
                   </span>
                   <span className="text-white/80">Tracker / Hierarchy / Audit</span>
                 </div>
@@ -95,33 +114,33 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [P]
+                    {formatKeyDisplay(cfg.pomodoro_play_pause)}
                   </span>
                   <span className="text-white/80">Start / Pause Pomodoro</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [R]
+                    {formatKeyDisplay(cfg.pomodoro_reset)}
                   </span>
                   <span className="text-white/80">Reset Pomodoro Timer</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [SPACE]
+                    {formatKeyDisplay(cfg.toggle_timer)}
                   </span>
                   <span className="text-white/80">Start / Stop Live Stopwatch</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [X]
+                    {formatKeyDisplay(cfg.toggle_complete)}
                   </span>
                   <span className="text-white/80">Mark Directive Complete</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [L]
+                    {formatKeyDisplay(cfg.log_time)} / {formatKeyDisplay(cfg.reduce_time)}
                   </span>
-                  <span className="text-white/80">Quick Log Time (+15m)</span>
+                  <span className="text-white/80">Log +15m / Reduce -15m</span>
                 </div>
               </div>
             </div>
@@ -137,19 +156,19 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [N]
+                    {formatKeyDisplay(cfg.add_task)}
                   </span>
                   <span className="text-white/80">Add New Task (Focus Title)</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [B]
+                    {formatKeyDisplay(cfg.bulk_ingest)}
                   </span>
                   <span className="text-white/80">Bulk Multi-Line Ingest</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [/]
+                    {formatKeyDisplay(cfg.quick_filter)}
                   </span>
                   <span className="text-white/80">Quick Task Filter / Search</span>
                 </div>
@@ -167,19 +186,19 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [K] / [?]
+                    {formatKeyDisplay(cfg.open_shortcuts)} / [?]
                   </span>
                   <span className="text-white/80">Toggle This Cheat Sheet</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [S]
+                    {formatKeyDisplay(cfg.open_settings)}
                   </span>
                   <span className="text-white/80">Open Settings Console</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    [U]
+                    {formatKeyDisplay(cfg.open_sync)}
                   </span>
                   <span className="text-white/80">Cloud Sync Menu (Pull / Push)</span>
                 </div>
