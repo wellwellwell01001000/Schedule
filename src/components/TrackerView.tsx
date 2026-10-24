@@ -158,8 +158,9 @@ export function TrackerView({
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  // Live Timer states: which task is currently running a live stopwatch
+  // Live Timer states: which task is currently running a live stopwatch or pomodoro session
   const [activeTimerTaskId, setActiveTimerTaskId] = useState<string | null>(null);
+  const [activePomodoroTaskId, setActivePomodoroTaskId] = useState<string | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -430,6 +431,9 @@ export function TrackerView({
   // Toggle Live Timer
   const handleToggleTimer = (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (activeTimerTaskId !== taskId && pomodoroRef.current?.isRunning()) {
+      pomodoroRef.current.togglePlayPause();
+    }
     if (activeTimerTaskId === taskId) {
       // Stopping timer: commit accumulated seconds to task minutes
       const additionalMinutes = Math.round(timerSeconds / 60);
@@ -525,8 +529,14 @@ export function TrackerView({
   };
 
   // Scheduled tasks count vs total - strictly sorted by start time for this specific day and date
-  const scheduledTasks = sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled !== false));
-  const descheduledTasks = sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled === false));
+  const scheduledTasks = useMemo(() => {
+    return sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled !== false));
+  }, [activeDayTasks]);
+
+  const descheduledTasks = useMemo(() => {
+    return sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled === false));
+  }, [activeDayTasks]);
+
   const completedCount = scheduledTasks.filter((t) => completedTaskIds.includes(t.id)).length;
   const totalTasks = scheduledTasks.length;
   const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
@@ -550,6 +560,11 @@ export function TrackerView({
   // 1. Check if user is currently running a live stopwatch on a task
   const runningTimerTask = activeTimerTaskId
     ? scheduledTasks.find((t) => t.id === activeTimerTaskId)
+    : undefined;
+
+  // 1b. Check if user is running a Pomodoro session on a task
+  const runningPomodoroTask = activePomodoroTaskId
+    ? scheduledTasks.find((t) => t.id === activePomodoroTaskId)
     : undefined;
 
   // 2. Check if real-time clock falls inside an uncompleted task's time slot (only when viewing today)
@@ -592,10 +607,10 @@ export function TrackerView({
     directiveMode = 'PREVIEW';
     currentFocusTask = pendingScheduledTasks[0];
     nextUpcomingTask = pendingScheduledTasks.length > 1 ? pendingScheduledTasks[1] : null;
-  } else if (runningTimerTask || matchedSlotTask) {
-    // Actively in session (live stopwatch or current time slot match)
+  } else if (runningTimerTask || runningPomodoroTask || matchedSlotTask) {
+    // Actively in session (live stopwatch, active pomodoro session, or current time slot match)
     directiveMode = 'IN_SESSION';
-    currentFocusTask = (runningTimerTask || matchedSlotTask)!;
+    currentFocusTask = (runningTimerTask || runningPomodoroTask || matchedSlotTask)!;
     nextUpcomingTask = upcomingTaskByTime || pendingScheduledTasks.find((t) => t.id !== currentFocusTask!.id) || null;
   } else if (upcomingTaskByTime) {
     // Standby before the next upcoming routine block
@@ -1260,6 +1275,8 @@ export function TrackerView({
                   <span className="text-[10px] font-bold uppercase tracking-widest bg-black text-white px-2 py-0.5">
                     {directiveMode === 'PREVIEW'
                       ? `PREVIEWING ${currentSchedule.dayName.toUpperCase()}`
+                      : activePomodoroTaskId === currentFocusTask.id
+                      ? 'POMODORO IN PROGRESS'
                       : activeTimerTaskId === currentFocusTask.id
                       ? 'STOPWATCH RUNNING'
                       : matchedSlotTask?.id === currentFocusTask.id
@@ -1337,24 +1354,37 @@ export function TrackerView({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      onClick={(e) => handleToggleTimer(currentFocusTask.id, e)}
-                      className={`px-3 py-1.5 text-xs font-bold border-2 border-black transition-none cursor-pointer uppercase ${
-                        activeTimerTaskId === currentFocusTask.id
-                          ? 'bg-black text-white animate-pulse'
-                          : 'bg-transparent text-black hover:bg-black hover:text-white'
-                      }`}
-                    >
-                      {activeTimerTaskId === currentFocusTask.id
-                        ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
-                            timerSeconds % 60
-                          ).padStart(2, '0')}]`
-                        : directiveMode === 'UPCOMING'
-                        ? '[START EARLY]'
-                        : directiveMode === 'OVERDUE'
-                        ? '[START LATE]'
-                        : '[START TIMER]'}
-                    </button>
+                    {activePomodoroTaskId === currentFocusTask.id ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          pomodoroRef.current?.togglePlayPause();
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold border-2 border-black bg-black text-white animate-pulse transition-none cursor-pointer uppercase"
+                        title="Pomodoro focus session active on this task (Hotkey: P to pause)"
+                      >
+                        [POMODORO RUNNING (P)]
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => handleToggleTimer(currentFocusTask.id, e)}
+                        className={`px-3 py-1.5 text-xs font-bold border-2 border-black transition-none cursor-pointer uppercase ${
+                          activeTimerTaskId === currentFocusTask.id
+                            ? 'bg-black text-white animate-pulse'
+                            : 'bg-transparent text-black hover:bg-black hover:text-white'
+                        }`}
+                      >
+                        {activeTimerTaskId === currentFocusTask.id
+                          ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
+                              timerSeconds % 60
+                            ).padStart(2, '0')}]`
+                          : directiveMode === 'UPCOMING'
+                          ? '[START EARLY]'
+                          : directiveMode === 'OVERDUE'
+                          ? '[START LATE]'
+                          : '[START TIMER]'}
+                      </button>
+                    )}
 
                     <button
                       onClick={() => toggleTaskCompletion(currentFocusTask.id)}
@@ -1509,6 +1539,7 @@ export function TrackerView({
                   const isCompleted = completedTaskIds.includes(task.id);
                   const isInProgress = currentFocusTask?.id === task.id && !isCompleted;
                   const isTimerRunning = activeTimerTaskId === task.id;
+                  const isPomodoroRunning = activePomodoroTaskId === task.id;
                   const timeSpent = dateTrackedTimeMap[task.id] || 0;
                   const matches = findRoutineMatches(task, schedules);
                   const isRecurringAcrossDays = matches.length > 1;
@@ -1555,6 +1586,12 @@ export function TrackerView({
                               {isInProgress && (
                                 <span className="bg-white text-black text-[9px] font-black px-1.5 py-0 tracking-wider">
                                   &gt;&gt; IN PROGRESS &lt;&lt;
+                                </span>
+                              )}
+
+                              {isPomodoroRunning && (
+                                <span className="bg-black text-white border border-white text-[9px] font-black px-1.5 py-0 tracking-wider animate-pulse">
+                                  POMODORO ACTIVE
                                 </span>
                               )}
 
@@ -1645,21 +1682,34 @@ export function TrackerView({
                         </div>
 
                         <div className="flex items-center gap-1.5">
-                          {/* Live Timer button */}
-                          <button
-                            onClick={(e) => handleToggleTimer(task.id, e)}
-                            className={`px-2 py-0.5 text-xs font-bold border transition-none cursor-pointer ${
-                              isTimerRunning
-                                ? 'bg-white text-black border-white animate-pulse'
-                                : 'border-white/50 text-white hover:border-white'
-                            }`}
-                          >
-                            {isTimerRunning
-                              ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
-                                  timerSeconds % 60
-                                ).padStart(2, '0')}]`
-                              : '[START TIMER]'}
-                          </button>
+                          {/* Live Timer / Pomodoro button */}
+                          {isPomodoroRunning ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                pomodoroRef.current?.togglePlayPause();
+                              }}
+                              className="px-2 py-0.5 text-xs font-bold border border-white bg-white text-black animate-pulse transition-none cursor-pointer uppercase"
+                              title="Pomodoro focus session active on this task (Hotkey: P)"
+                            >
+                              [POMODORO RUNNING (P)]
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => handleToggleTimer(task.id, e)}
+                              className={`px-2 py-0.5 text-xs font-bold border transition-none cursor-pointer ${
+                                isTimerRunning
+                                  ? 'bg-white text-black border-white animate-pulse'
+                                  : 'border-white/50 text-white hover:border-white'
+                              }`}
+                            >
+                              {isTimerRunning
+                                ? `[STOPWATCH: ${Math.floor(timerSeconds / 60)}:${String(
+                                    timerSeconds % 60
+                                  ).padStart(2, '0')}]`
+                                : '[START TIMER]'}
+                            </button>
+                          )}
 
                           {/* Dedicated Edit Time Modal Button */}
                           <button
@@ -1877,7 +1927,9 @@ export function TrackerView({
             onLogMinutesToTask={(taskId, mins) => {
               handleAdjustTime(taskId, mins);
             }}
-            onStartLiveStopwatch={handleStartLiveStopwatchOnTask}
+            onPomodoroStateChange={(isRunning, taskId) => {
+              setActivePomodoroTaskId(isRunning ? taskId : null);
+            }}
             onPauseLiveStopwatch={handlePauseLiveStopwatch}
           />
         </section>

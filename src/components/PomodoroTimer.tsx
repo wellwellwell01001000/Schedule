@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { TaskItem } from '../types';
 import { playCustomOrFallbackSound } from '../data/soundStore';
 import { generateAsciiProgressBar } from '../utils/ascii';
@@ -14,7 +14,7 @@ interface PomodoroTimerProps {
   scheduledTasks: TaskItem[];
   activeFocusTaskId?: string;
   onLogMinutesToTask: (taskId: string, minutes: number) => void;
-  onStartLiveStopwatch?: (taskId: string) => void;
+  onPomodoroStateChange?: (isRunning: boolean, taskId: string | null) => void;
   onPauseLiveStopwatch?: () => void;
 }
 
@@ -22,7 +22,13 @@ type SessionPreset = 'focus_25' | 'deep_50' | 'short_break' | 'long_break';
 
 export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>(
   function PomodoroTimer(
-    { scheduledTasks, activeFocusTaskId, onLogMinutesToTask, onStartLiveStopwatch, onPauseLiveStopwatch },
+    {
+      scheduledTasks,
+      activeFocusTaskId,
+      onLogMinutesToTask,
+      onPomodoroStateChange,
+      onPauseLiveStopwatch,
+    },
     ref
   ) {
     // Dropdown selection - defaults to active focus task or first scheduled task
@@ -30,6 +36,7 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
       return activeFocusTaskId || scheduledTasks[0]?.id || '';
     });
 
+    const userSelectedRef = useRef<boolean>(false);
     const [preset, setPreset] = useState<SessionPreset>('focus_25');
     const [targetDurationMinutes, setTargetDurationMinutes] = useState<number>(25);
     const [timeLeftSeconds, setTimeLeftSeconds] = useState<number>(25 * 60);
@@ -37,104 +44,90 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
     const [pomodoroCount, setPomodoroCount] = useState<number>(0);
     const [justCompletedAlert, setJustCompletedAlert] = useState<string | null>(null);
 
-    // Track starting seconds for current running round to auto-log exact elapsed minutes on pause/reset
-    const roundStartLeftSecondsRef = useRef<number>(25 * 60);
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
+    // Precise time tracking refs
+    const isRunningRef = useRef<boolean>(false);
+    const timeLeftSecondsRef = useRef<number>(25 * 60);
+    const targetEndTimeRef = useRef<number | null>(null);
+    const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Keep active focus task synced in dropdown when idle if user hasn't selected another task
+    // Uncommitted elapsed seconds bucket - keeps track of seconds worked even across multiple pauses
+    const uncommittedSecondsRef = useRef<number>(0);
+    const lastTickTimeRef = useRef<number | null>(null);
+
+    // Keep stable references to props so callbacks never trigger interval resets
+    const scheduledTasksRef = useRef<TaskItem[]>(scheduledTasks);
+    scheduledTasksRef.current = scheduledTasks;
+
+    const onLogMinutesToTaskRef = useRef(onLogMinutesToTask);
+    onLogMinutesToTaskRef.current = onLogMinutesToTask;
+
+    const onPomodoroStateChangeRef = useRef(onPomodoroStateChange);
+    onPomodoroStateChangeRef.current = onPomodoroStateChange;
+
+    const onPauseLiveStopwatchRef = useRef(onPauseLiveStopwatch);
+    onPauseLiveStopwatchRef.current = onPauseLiveStopwatch;
+
+    const selectedTaskIdRef = useRef<string>(selectedTaskId);
+    selectedTaskIdRef.current = selectedTaskId;
+
+    const presetRef = useRef<SessionPreset>(preset);
+    presetRef.current = preset;
+
+    // Keep active focus task synced in dropdown when idle if user hasn't explicitly picked a different task
     const prevActiveFocusRef = useRef<string | undefined>(activeFocusTaskId);
     useEffect(() => {
-      if (!isRunning && activeFocusTaskId) {
+      if (!isRunningRef.current && activeFocusTaskId && !userSelectedRef.current) {
         if (!selectedTaskId || selectedTaskId === prevActiveFocusRef.current) {
           setSelectedTaskId(activeFocusTaskId);
         }
       }
       prevActiveFocusRef.current = activeFocusTaskId;
-    }, [activeFocusTaskId, isRunning, selectedTaskId]);
+    }, [activeFocusTaskId, selectedTaskId]);
 
-    // Ensure selectedTaskId falls back to first scheduled task if current selection is invalid
+    // Ensure selectedTaskId falls back to first scheduled task if current selection is deleted/invalid
     useEffect(() => {
-      if (scheduledTasks.length > 0 && (!selectedTaskId || !scheduledTasks.some((t) => t.id === selectedTaskId))) {
-        setSelectedTaskId(scheduledTasks[0].id);
+      if (scheduledTasks.length > 0) {
+        if (!selectedTaskId || !scheduledTasks.some((t) => t.id === selectedTaskId)) {
+          setSelectedTaskId(scheduledTasks[0].id);
+          userSelectedRef.current = false;
+        }
       }
     }, [scheduledTasks, selectedTaskId]);
 
-    // Helper to log accumulated elapsed minutes worked in the current Pomodoro round
-    const logElapsedMinutesForCurrentRound = () => {
-      const elapsedSecondsInRound = roundStartLeftSecondsRef.current - timeLeftSeconds;
-      const elapsedMinutes = Math.round(elapsedSecondsInRound / 60);
-      const isWorkSession = preset === 'focus_25' || preset === 'deep_50';
+    // Helper to log uncommitted elapsed minutes to the selected task
+    const flushElapsedTimeToTask = useCallback((): { elapsedMinutes: number; taskTitle: string } | null => {
+      const isWorkSession = presetRef.current === 'focus_25' || presetRef.current === 'deep_50';
+      const currentTaskId = selectedTaskIdRef.current;
+      const uncommitted = uncommittedSecondsRef.current;
 
-      if (elapsedMinutes > 0 && isWorkSession && selectedTaskId) {
-        onLogMinutesToTask(selectedTaskId, elapsedMinutes);
-        roundStartLeftSecondsRef.current = timeLeftSeconds;
-        const targetTask = scheduledTasks.find((t) => t.id === selectedTaskId);
+      if (!isWorkSession || !currentTaskId || uncommitted <= 0) {
+        return null;
+      }
+
+      // Convert seconds to minutes (round up if >= 30 seconds worked)
+      const elapsedMinutes = Math.round(uncommitted / 60);
+
+      if (elapsedMinutes > 0) {
+        onLogMinutesToTaskRef.current(currentTaskId, elapsedMinutes);
+        // Reset uncommitted seconds
+        uncommittedSecondsRef.current = 0;
+        const targetTask = scheduledTasksRef.current.find((t) => t.id === currentTaskId);
         return { elapsedMinutes, taskTitle: targetTask?.title || 'TASK' };
       }
+
       return null;
-    };
-
-    // Toggle Play/Pause on whichever task is currently selected in the "Attach to Scheduled Task" dropdown
-    const handleTogglePlayPause = (): boolean => {
-      if (isRunning) {
-        // Pausing: Auto-log elapsed time worked in this round to the selected task
-        const logged = logElapsedMinutesForCurrentRound();
-        setIsRunning(false);
-        onPauseLiveStopwatch?.();
-        if (logged) {
-          setJustCompletedAlert(`[AUTOLOG ON PAUSE]: ${logged.elapsedMinutes}m credited to "${logged.taskTitle}"`);
-        }
-        return false;
-      } else {
-        // Starting: Ensure roundStartLeftSeconds matches current timeLeftSeconds
-        roundStartLeftSecondsRef.current = timeLeftSeconds;
-        setIsRunning(true);
-        // Start live stopwatch on the selected task simultaneously
-        if (selectedTaskId) {
-          onStartLiveStopwatch?.(selectedTaskId);
-        }
-        return true;
-      }
-    };
-
-    // Reset Pomodoro timer: auto-log any uncommitted elapsed minutes, then reset to preset
-    const handleReset = () => {
-      const logged = logElapsedMinutesForCurrentRound();
-      setIsRunning(false);
-      onPauseLiveStopwatch?.();
-      const resetSeconds = targetDurationMinutes * 60;
-      setTimeLeftSeconds(resetSeconds);
-      roundStartLeftSecondsRef.current = resetSeconds;
-
-      if (logged) {
-        setJustCompletedAlert(`[RESET & LOGGED]: ${logged.elapsedMinutes}m credited to "${logged.taskTitle}"`);
-      } else {
-        setJustCompletedAlert(`[TIMER RESET]: Reset to ${targetDurationMinutes}m`);
-        setTimeout(() => setJustCompletedAlert(null), 2500);
-      }
-    };
-
-    // Imperative handle for keyboard shortcuts (P to toggle, R to reset)
-    useImperativeHandle(ref, () => ({
-      togglePlayPause: () => {
-        return handleTogglePlayPause();
-      },
-      reset: () => {
-        handleReset();
-      },
-      attachTask: (taskId: string) => {
-        setSelectedTaskId(taskId);
-      },
-      isRunning: () => isRunning,
-    }));
+    }, []);
 
     // Audio chime tone fallback using browser Web Audio API
-    const playChime = () => {
+    const playChime = useCallback(() => {
       try {
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
 
@@ -150,16 +143,154 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
         osc.start();
         osc.stop(ctx.currentTime + 0.6);
       } catch {
-        // Audio context may be blocked before interaction
+        // Audio context may be blocked before user interaction
       }
-    };
+    }, []);
+
+    // Main countdown tick handler (imperative, robust against re-renders)
+    const tick = useCallback(() => {
+      if (!isRunningRef.current) return;
+
+      const now = Date.now();
+      if (lastTickTimeRef.current !== null) {
+        const deltaSec = Math.max(0, (now - lastTickTimeRef.current) / 1000);
+        const isWorkSession = presetRef.current === 'focus_25' || presetRef.current === 'deep_50';
+        if (isWorkSession) {
+          uncommittedSecondsRef.current += deltaSec;
+        }
+      }
+      lastTickTimeRef.current = now;
+
+      if (targetEndTimeRef.current !== null) {
+        const remainingMs = Math.max(0, targetEndTimeRef.current - now);
+        const remainingSeconds = Math.ceil(remainingMs / 1000);
+
+        timeLeftSecondsRef.current = remainingSeconds;
+        setTimeLeftSeconds(remainingSeconds);
+
+        if (remainingSeconds <= 0) {
+          // Completed session!
+          isRunningRef.current = false;
+          setIsRunning(false);
+          targetEndTimeRef.current = null;
+          lastTickTimeRef.current = null;
+
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+          }
+
+          onPomodoroStateChangeRef.current?.(false, null);
+          playChime();
+
+          const isWorkSession = presetRef.current === 'focus_25' || presetRef.current === 'deep_50';
+          if (isWorkSession) {
+            playCustomOrFallbackSound('pomodoro_complete');
+            setPomodoroCount((c) => c + 1);
+
+            // Commit all remaining uncommitted seconds (at least 1 minute)
+            const minutesToCommit = Math.max(
+              1,
+              Math.round(uncommittedSecondsRef.current / 60)
+            );
+            uncommittedSecondsRef.current = 0;
+
+            const targetId = selectedTaskIdRef.current;
+            if (targetId) {
+              onLogMinutesToTaskRef.current(targetId, minutesToCommit);
+            }
+            const targetTask = scheduledTasksRef.current.find((t) => t.id === targetId);
+            setJustCompletedAlert(
+              `COMPLETED ${minutesToCommit}m FOCUS // LOGGED TO: ${targetTask?.title || 'TASK'}`
+            );
+          } else {
+            playCustomOrFallbackSound('break_complete');
+            setJustCompletedAlert(`BREAK FINISHED // READY FOR NEXT FOCUS ROUND`);
+          }
+        }
+      }
+    }, [playChime]);
+
+    // Start timer execution loop
+    const startTimer = useCallback(() => {
+      // Pause any conflicting manual stopwatch in TrackerView
+      onPauseLiveStopwatchRef.current?.();
+
+      isRunningRef.current = true;
+      setIsRunning(true);
+
+      const isWorkSession = presetRef.current === 'focus_25' || presetRef.current === 'deep_50';
+      onPomodoroStateChangeRef.current?.(true, isWorkSession ? selectedTaskIdRef.current : null);
+
+      const now = Date.now();
+      lastTickTimeRef.current = now;
+      targetEndTimeRef.current = now + timeLeftSecondsRef.current * 1000;
+
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+      timerIntervalRef.current = setInterval(tick, 250);
+    }, [tick]);
+
+    // Pause timer execution loop
+    const pauseTimer = useCallback(() => {
+      isRunningRef.current = false;
+      setIsRunning(false);
+
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+
+      // Record final fractional second delta before stopping
+      if (lastTickTimeRef.current !== null) {
+        const deltaSec = Math.max(0, (Date.now() - lastTickTimeRef.current) / 1000);
+        const isWorkSession = presetRef.current === 'focus_25' || presetRef.current === 'deep_50';
+        if (isWorkSession) {
+          uncommittedSecondsRef.current += deltaSec;
+        }
+      }
+      lastTickTimeRef.current = null;
+      targetEndTimeRef.current = null;
+
+      onPomodoroStateChangeRef.current?.(false, null);
+
+      // Auto-log uncommitted time to task
+      const logged = flushElapsedTimeToTask();
+      if (logged) {
+        setJustCompletedAlert(`[AUTOLOG ON PAUSE]: ${logged.elapsedMinutes}m credited to "${logged.taskTitle}"`);
+      }
+    }, [flushElapsedTimeToTask]);
+
+    // Toggle Play / Pause
+    const handleTogglePlayPause = useCallback((): boolean => {
+      if (isRunningRef.current) {
+        pauseTimer();
+        return false;
+      } else {
+        startTimer();
+        return true;
+      }
+    }, [pauseTimer, startTimer]);
+
+    // Reset Pomodoro timer: auto-log any uncommitted elapsed minutes, then reset to target duration
+    const handleReset = useCallback(() => {
+      pauseTimer();
+      const resetSeconds = targetDurationMinutes * 60;
+      timeLeftSecondsRef.current = resetSeconds;
+      setTimeLeftSeconds(resetSeconds);
+      uncommittedSecondsRef.current = 0;
+
+      setJustCompletedAlert(`[TIMER RESET]: Reset to ${targetDurationMinutes}m`);
+      setTimeout(() => setJustCompletedAlert(null), 2500);
+    }, [pauseTimer, targetDurationMinutes]);
 
     // Switch preset
     const handleSelectPreset = (newPreset: SessionPreset) => {
-      logElapsedMinutesForCurrentRound();
-      setIsRunning(false);
-      onPauseLiveStopwatch?.();
+      pauseTimer();
       setPreset(newPreset);
+      presetRef.current = newPreset;
+
       let mins = 25;
       if (newPreset === 'focus_25') mins = 25;
       if (newPreset === 'deep_50') mins = 50;
@@ -168,79 +299,58 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
 
       setTargetDurationMinutes(mins);
       const newSeconds = mins * 60;
+      timeLeftSecondsRef.current = newSeconds;
       setTimeLeftSeconds(newSeconds);
-      roundStartLeftSecondsRef.current = newSeconds;
+      uncommittedSecondsRef.current = 0;
       setJustCompletedAlert(null);
     };
 
-    // Timer countdown loop
-    useEffect(() => {
-      if (isRunning) {
-        timerRef.current = setInterval(() => {
-          setTimeLeftSeconds((prev) => {
-            if (prev <= 1) {
-              // Completed!
-              setIsRunning(false);
-              onPauseLiveStopwatch?.();
-              playChime();
-
-              const isWorkSession = preset === 'focus_25' || preset === 'deep_50';
-              if (isWorkSession) {
-                playCustomOrFallbackSound('pomodoro_complete');
-                setPomodoroCount((c) => c + 1);
-
-                // Auto-log full session duration to selected task
-                const elapsedSecondsInRound = roundStartLeftSecondsRef.current - 0;
-                const elapsedMinutes = Math.max(1, Math.round(elapsedSecondsInRound / 60));
-                if (selectedTaskId) {
-                  onLogMinutesToTask(selectedTaskId, elapsedMinutes);
-                }
-                const targetTask = scheduledTasks.find((t) => t.id === selectedTaskId);
-                setJustCompletedAlert(
-                  `COMPLETED ${elapsedMinutes}m FOCUS // LOGGED TO: ${targetTask?.title || 'TASK'}`
-                );
-              } else {
-                playCustomOrFallbackSound('break_complete');
-                setJustCompletedAlert(`BREAK FINISHED // READY FOR NEXT FOCUS ROUND`);
-              }
-
-              roundStartLeftSecondsRef.current = 0;
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
-      } else {
-        if (timerRef.current) clearInterval(timerRef.current);
-      }
-
-      return () => {
-        if (timerRef.current) clearInterval(timerRef.current);
-      };
-    }, [isRunning, preset, selectedTaskId, targetDurationMinutes, onLogMinutesToTask, scheduledTasks, onPauseLiveStopwatch]);
-
     // Handle manual log & finish early
     const handleFinishEarly = () => {
-      const logged = logElapsedMinutesForCurrentRound();
-      setIsRunning(false);
-      onPauseLiveStopwatch?.();
-
-      if (logged) {
-        setJustCompletedAlert(`EARLY LOG: ${logged.elapsedMinutes}m CREDITED TO "${logged.taskTitle}"`);
-      }
-
+      pauseTimer();
       const resetSeconds = targetDurationMinutes * 60;
+      timeLeftSecondsRef.current = resetSeconds;
       setTimeLeftSeconds(resetSeconds);
-      roundStartLeftSecondsRef.current = resetSeconds;
+      uncommittedSecondsRef.current = 0;
     };
+
+    // Cleanup interval on unmount
+    useEffect(() => {
+      return () => {
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+          timerIntervalRef.current = null;
+        }
+      };
+    }, []);
+
+    // Imperative handle for keyboard shortcuts (P to toggle, R to reset)
+    useImperativeHandle(
+      ref,
+      () => ({
+        togglePlayPause: () => {
+          return handleTogglePlayPause();
+        },
+        reset: () => {
+          handleReset();
+        },
+        attachTask: (taskId: string) => {
+          userSelectedRef.current = true;
+          setSelectedTaskId(taskId);
+          selectedTaskIdRef.current = taskId;
+        },
+        isRunning: () => isRunningRef.current,
+      }),
+      [handleTogglePlayPause, handleReset]
+    );
 
     const minutesDisplay = Math.floor(timeLeftSeconds / 60);
     const secondsDisplay = timeLeftSeconds % 60;
     const timeFormatted = `${String(minutesDisplay).padStart(2, '0')}:${String(secondsDisplay).padStart(2, '0')}`;
 
     const totalSeconds = targetDurationMinutes * 60;
-    const elapsedSeconds = totalSeconds - timeLeftSeconds;
-    const progressPercent = totalSeconds > 0 ? Math.round((elapsedSeconds / totalSeconds) * 100) : 0;
+    const elapsedSeconds = Math.max(0, totalSeconds - timeLeftSeconds);
+    const progressPercent = totalSeconds > 0 ? Math.min(100, Math.round((elapsedSeconds / totalSeconds) * 100)) : 0;
     const asciiBar = generateAsciiProgressBar(elapsedSeconds, totalSeconds, 18, 'blocks');
 
     const currentTask = scheduledTasks.find((t) => t.id === selectedTaskId);
@@ -272,7 +382,11 @@ export const PomodoroTimer = forwardRef<PomodoroTimerHandle, PomodoroTimerProps>
             </div>
             <select
               value={selectedTaskId}
-              onChange={(e) => setSelectedTaskId(e.target.value)}
+              onChange={(e) => {
+                userSelectedRef.current = true;
+                setSelectedTaskId(e.target.value);
+                selectedTaskIdRef.current = e.target.value;
+              }}
               disabled={isRunning}
               className="w-full bg-black border border-white/50 px-2.5 py-1 text-xs text-white focus:border-white focus:outline-none disabled:opacity-50 uppercase cursor-pointer"
             >
