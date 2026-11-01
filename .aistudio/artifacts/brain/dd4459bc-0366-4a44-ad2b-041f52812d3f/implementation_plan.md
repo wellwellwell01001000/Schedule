@@ -1,92 +1,119 @@
-# Implementation Plan: Centered Tabbed Settings Console
+# Untimed Checklist, To-Dos & Timeless Schedule Milestones
 
-## 1. Overview & Clarified Design Decisions
+A flexible task management upgrade introducing untimed all-day checklist items, pure text notes, and timed schedule notices without timers or stopwatch tracking, maintaining complete isolation from the core routine completion bar.
 
-Based on user feedback, we are replacing the side slide-out drawer with a **centered full-screen modal dialog** featuring an organized **tabbed interface**.
+## User Review & Critical Decisions
 
-### Key Architectural Decisions
-- **Display Format**: Centered modal overlay window (`w-full max-w-4xl h-[85vh] max-h-[820px]`) centered over a dark backdrop (`bg-black/85`), with support for `Escape` key and `[X CLOSE]`.
-- **Navigation Structure**: Top horizontal sub-tab bar inside the modal allowing instantaneous switching between:
-  1. `[1] TEMPLATES` // Routine presets & slate setup
-  2. `[2] ARCHIVE` // System snapshots, JSON backup & restore
-  3. `[3] CATEGORIES` // Category definitions, creation & removal
-  4. `[4] CLOUD SYNC` // Google Drive cloud vault, sync code & automated syncing
-  5. `[5] SYSTEM` // Walkthrough tutorial, keyboard guide & clean reset
-- **Aesthetic**: Brutalist terminal monospace design with high-contrast white borders, tabular figures, and responsive layout.
-- **Top Navigation Bar**: Remains streamlined with view tabs (`[1]`, `[2]`, `[3]`), `[+ BULK INGEST]`, and the `[SETTINGS]` button opening the centered modal.
+> [!IMPORTANT]
+> The following design decisions were confirmed based on your preferences:
+> - **Display Separation**: Timed tasks without checkboxes will appear in chronological order directly in the schedule, while untimed tasks (all-day to-dos) will live in a dedicated **`_DAILY_SCRATCHPAD`** checklist panel.
+> - **Item Modes**: When creating items, you can select whether it is **Checkable** (`[ ]` / `[X]`) or a **Pure Note** (informational text banner without checkboxes).
+> - **Progress Bar Isolation**: Untimed tasks and pure notes will **not** count toward the routine schedule completion percentage. The routine percentage remains dedicated strictly to your scheduled timed routine blocks.
 
 ---
 
-## 2. Component Specifications
+## 1. Overview & Core Concept
 
-### A. New Component: `src/components/SettingsModal.tsx`
-- **Container**: `fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 font-mono` with backdrop overlay.
-- **Modal Window**: `border-2 border-white bg-black w-full max-w-4xl h-[85vh] max-h-[820px] flex flex-col shadow-2xl`.
-- **Modal Header**:
-  - Left: Title `_SYSTEM_SETTINGS_CONSOLE` and active section indicator (`// TAB: TEMPLATES`).
-  - Right: `[X CLOSE]` button and keyboard hint (`[ESC]`).
-- **Sub-Tab Navigation Bar**:
-  - Horizontal tab row with active state:
-    - `[1] TEMPLATES`
-    - `[2] ARCHIVE & BACKUP`
-    - `[3] CATEGORIES`
-    - `[4] CLOUD SYNC`
-    - `[5] SYSTEM GUIDE`
-  - Keyboard shortcut navigation: pressing `1`–`5` switches tabs while modal is open.
-- **Tab Content Panels**:
-  1. **Templates Tab**:
-     - Visual comparison of built-in templates (Clean Slate, Alternating Split, High-Intensity CS & Lab).
-     - Preview of daily schedule structure.
-     - Direct `[APPLY TEMPLATE]` button with immediate confirmation toast.
-  2. **Archive Tab**:
-     - Point-in-time snapshots ledger with timestamps and task count.
-     - `[+ CREATE SNAPSHOT NOW]` one-click manual backup button.
-     - `[DOWNLOAD .JSON]` file export and `[RESTORE FILE]` file upload input.
-     - Clear individual or all snapshots.
-  3. **Categories Tab**:
-     - Inline category management: view all active categories.
-     - Clean `<div>` input for creating new custom categories with Enter key submission.
-     - `[REMOVE]` button for each category with safe rollback and count indicator.
-  4. **Cloud Sync Tab**:
-     - Google Drive Cloud Vault status: active 6-character Sync Code.
-     - Direct `[FETCH FROM CLOUD]` and `[UPLOAD TO CLOUD]` buttons.
-     - Option to enter/generate custom Sync Code and configure Google Apps Script Webhook URL.
-  5. **System Guide Tab**:
-     - `[LAUNCH INTERACTIVE TUTORIAL]` to open the step-by-step walkthrough.
-     - Quick Reference Cheat Sheet for keyboard shortcuts and routine phases.
-     - Danger Zone: `[PURGE ALL DATA & START CLEAN]` with safeguard confirmation.
-- **Modal Footer**:
-  - Status ticker: `STATUS: ONLINE`, `SYNC CODE: ROUT-XXXX`, `CATEGORIES: N ACTIVE`.
-  - `[DONE]` button to dismiss.
-
-### B. Header Component: `src/components/Header.tsx`
-- Ensure `[SETTINGS]` button cleanly triggers opening `SettingsModal`.
-- Retain the clean, decluttered top bar (View Tabs + Bulk Ingest + Settings).
-
-### C. Application Root: `src/App.tsx`
-- Replace `SettingsDrawer` import and mounting with `SettingsModal`.
-- Maintain clean callback pass-through for `onApplyTemplate`, `onPurgeAndStartClean`, `onRestoreSystem`, and sync actions.
+- **What It Does**: Enables adding flexible day-level tasks alongside your strict timed routines:
+  1. **Untimed Checkable To-Dos**: All-day checklist items with toggleable checkboxes `[ ]` ⇄ `[X]`.
+  2. **Untimed Pure Notes**: Quick text notes and reminders (no checkboxes, no timer).
+  3. **Timed Schedule Notices**: Tasks scheduled for a specific time (e.g. 14:00 Doctor Call) that appear in the schedule timeline but have **no stopwatch**, **no countdown timer**, and **no checkbox**.
+  4. **Standard Timed Routines**: Preserves all existing timed routines with Pomodoro, stopwatch, duration, and progress logging.
+- **Target Persona**: Fast-paced power users who want strict timeboxed routines for deep work, but also need a frictionless scratchpad for ad-hoc to-dos and milestone reminders on the same day.
+- **Key Value**: Eliminates the need to assign artificial durations and start times to simple errands or reference notes, while keeping your daily focus schedule clean.
 
 ---
 
-## 3. Step-by-Step Implementation Sequence
+## 2. User Experience & Visual Design
 
-1. **Step 1**: Create `src/components/SettingsModal.tsx` with the 5 tabbed sections and full keyboard navigation.
-2. **Step 2**: Remove `src/components/SettingsDrawer.tsx` or replace its usage in `src/App.tsx`.
-3. **Step 3**: Connect all modal actions (`applyTemplate`, `createSnapshot`, `restoreBackup`, `syncActions`, `categoryActions`).
-4. **Step 4**: Verify compilation and linting via `compile_applet` and `lint_applet`.
-5. **Step 5**: Test opening the modal, switching between the 5 tabs, applying actions, and closing via `[X CLOSE]`, backdrop, or `Escape`.
+### Key User Flows
+1. **Quick-Adding Untimed To-Dos**:
+   - In the **`_DAILY_SCRATCHPAD`** card (placed right in the tracker view), an inline input allows typing `Buy groceries` and hitting `Enter`. It instantly adds a checkable to-do for today.
+   - Click `[ ]` to check off `[X]`. A separate counter displays `CHECKLIST: 1/3 DONE`.
+2. **Creating via Modal**:
+   - In the `[+] ADD TASK` modal, a new Mode Selector switch lets you pick:
+     - `[ROUTINE]` (Timed with stopwatch / Pomodoro)
+     - `[TIMED NOTICE]` (Specific hour, informational only, no timers/checkbox)
+     - `[CHECKLIST]` (All-day checkable to-do)
+     - `[NOTE]` (All-day pure text note)
+   - When `CHECKLIST` or `NOTE` is chosen, the time picker and duration fields disappear automatically.
+3. **Timed Schedule Timeline**:
+   - `timed_routine` items show duration, start time, `[START TIMER]`, and `[STOPWATCH]`.
+   - `timed_note` items show start time, category tag, and text, styled with a distinct subtle border and `[NOTE]` badge, without timer buttons or checkboxes.
+
+### Visual Identity & Theme
+- **Aesthetic**: Brutalist monochromatic terminal aesthetic matching the existing design (`border border-white`, uppercase mono text, bracketed badges).
+- **Checklist Presentation**: Clean ASCII markers `[ ]` and `[X]` with strikethrough upon completion.
+- **Pure Note Presentation**: Prefix `// ` or `[NOTE]` with muted border so it reads cleanly as reference text.
 
 ---
 
-## 4. Verification & Testing Checklist
+## 3. Key Product Decisions & Trade-Offs
 
-- [x] Clicking `[SETTINGS]` in the top header opens the centered full-screen modal (not a side drawer).
-- [x] Sub-tabs `[1]` through `[5]` switch cleanly without page reloads or layout shift.
-- [x] Templates tab allows previewing and applying routine presets.
-- [x] Archive tab lists snapshots and supports immediate snapshot creation and JSON export.
-- [x] Categories tab allows adding and removing categories seamlessly without form errors.
-- [x] Cloud Sync tab allows syncing with Google Drive and updating sync codes.
-- [x] System Guide tab launches the interactive tutorial and provides system docs.
-- [x] Pressing `Escape` or clicking `[X CLOSE]` dismisses the modal.
-- [x] `compile_applet` and `lint_applet` pass with 0 errors.
+- **Decision 1: Progress Bar Calculation Isolation**
+  - *Chosen Approach*: Routine progress bar continues to compute `(completedScheduledMinutes / totalScheduledMinutes) * 100` or completed routine count, strictly filtering out untimed tasks and pure notes.
+  - *Why*: Adding 10 small quick errands won't skew your primary 8-hour deep-work routine progress. Untimed tasks get their own dedicated mini-counter.
+- **Decision 2: Dual Entry Point (Inline Scratchpad + Modal)**
+  - *Chosen Approach*: Provide a fast inline input in the scratchpad for quick to-dos, plus full options in the Add Task modal for recurring/categorized items.
+  - *Why*: Daily errands must be effortless to jot down without multi-step form dialogs.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### Component & Data Architecture Diagram
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                               App State                                │
+│      (tasks: TaskItem[], dayTaskLogs, completedTaskIds per date)       │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+         ┌──────────────────────────┴──────────────────────────┐
+         ▼                                                     ▼
+┌──────────────────────────────┐              ┌──────────────────────────────┐
+│       Scheduled Timeline     │              │       _DAILY_SCRATCHPAD      │
+│  - Timed Routines (timers)   │              │  - Untimed Checklists ([X])  │
+│  - Timed Notices (pure info) │              │  - Untimed Pure Notes (// )  │
+│  * Drives Routine Progress % │              │  - Inline Fast Add Input     │
+└──────────────────────────────┘              │  * Independent Done Counter  │
+                                              └──────────────────────────────┘
+```
+
+### Data Model (`src/types.ts`)
+```ts
+export type TaskType = 'timed_routine' | 'timed_note' | 'untimed_checklist' | 'untimed_note';
+
+export interface TaskItem {
+  id: string;
+  time: string;              // "HH:MM" or "ANYTIME"
+  title: string;
+  category: TaskCategory;
+  details: string;
+  durationMinutes: number;   // 0 for notes / untimed
+  timeSpentMinutes?: number;
+  isScheduled?: boolean;
+  isRepetitive?: boolean;
+  repeatDays?: DayKey[];
+  oneTimeDate?: string;
+  highlight?: boolean;
+  isCustom?: boolean;
+
+  taskType?: TaskType;       // Defaults to 'timed_routine'
+  isCheckable?: boolean;     // False for pure notes
+  isUntimed?: boolean;       // True for scratchpad items
+}
+```
+
+---
+
+## Verification & Testing Plan
+1. **Creation**:
+   - Add untimed checklist item via inline input and via Modal.
+   - Add untimed pure note; verify it renders without a checkbox.
+   - Add timed notice; verify it appears in chronological order in the schedule without timer/stopwatch buttons.
+2. **Progress Isolation**:
+   - Complete untimed checklist items; verify the main routine progress bar does not change.
+3. **Persistence & Day Switching**:
+   - Verify checked states persist across page reloads and date selections in `localStorage`.
+4. **Build Quality**:
+   - Run `compile_applet` and `lint_applet` to confirm zero compilation or lint errors.

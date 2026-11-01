@@ -8,10 +8,48 @@ import {
   TaskItem,
   TaskTimeAuditItem,
   TaskCategory,
+  TaskType,
 } from '../types';
 import { SCHEDULES } from './scheduleData';
 import { getTodayDateStr } from '../utils/ascii';
 import { sortDayTaskLogsByStartTime } from '../utils/taskSorting';
+
+/**
+ * Validates whether a task is a genuine routine task eligible for history metrics and audit.
+ * Untimed to-dos (untimed_checklist), notes (untimed_note), and milestone notices (timed_note)
+ * are strictly scratchpad/schedule items and are NEVER logged into historical metrics or task time audit.
+ */
+export function isLoggableRoutineTask(task: {
+  taskType?: TaskType;
+  isUntimed?: boolean;
+  time?: string;
+  timeSlot?: string;
+  details?: string;
+  durationMinutes?: number;
+}): boolean {
+  if (
+    task.taskType === 'untimed_checklist' ||
+    task.taskType === 'untimed_note' ||
+    task.taskType === 'timed_note'
+  ) {
+    return false;
+  }
+  if (task.isUntimed === true) {
+    return false;
+  }
+  const tStr = (task.time || task.timeSlot || '').trim().toUpperCase();
+  if (tStr === 'ANYTIME' || tStr === '') {
+    return false;
+  }
+  if (
+    task.details === 'Daily reference note.' ||
+    task.details === 'Untimed to-do item.' ||
+    task.details === 'Scratchpad item.'
+  ) {
+    return false;
+  }
+  return true;
+}
 
 // Helper to calculate exact week metadata for any date string (YYYY-MM-DD)
 export function getWeekInfoForDate(dateStr: string): {
@@ -68,7 +106,8 @@ export function rebalanceAndSortHistory(history: MonthLogRecord[]): MonthLogReco
     const allDaysMap = new Map<string, DayLogRecord>();
     for (const week of month.weeks || []) {
       for (const day of week.days || []) {
-        const sortedDayTasks = sortDayTaskLogsByStartTime(day.tasks || []);
+        const loggableTasks = (day.tasks || []).filter(isLoggableRoutineTask);
+        const sortedDayTasks = sortDayTaskLogsByStartTime(loggableTasks);
         const totalTime = sortedDayTasks.reduce((acc, t) => acc + t.timeSpentMinutes, 0);
         const completedCount = sortedDayTasks.filter((t) => t.completed).length;
 
@@ -531,7 +570,10 @@ export function syncDayActionToHistory(
     history.push(monthRecord);
   }
 
-  const convertedTasks: DayTaskLog[] = tasks.map((t) => {
+  // Strictly filter out non-routine tasks: scratchpad notes, untimed to-dos, and milestone notices are excluded from history
+  const loggableTasks = tasks.filter(isLoggableRoutineTask);
+
+  const convertedTasks: DayTaskLog[] = loggableTasks.map((t) => {
     const isDone = completedIds.includes(t.id);
     const timeSpent = (t.timeSpentMinutes !== undefined && t.timeSpentMinutes > 0)
       ? t.timeSpentMinutes
@@ -549,6 +591,7 @@ export function syncDayActionToHistory(
       isRepetitive: t.isRepetitive !== false,
       timeSlot: t.time,
       details: t.details,
+      taskType: t.taskType,
     };
   });
 
@@ -909,7 +952,9 @@ export function cleanZeroHourTasksFromHistory(
   const scheduleTaskKeys = new Set<string>();
   for (const sched of Object.values(schedules)) {
     for (const t of sched.tasks || []) {
-      scheduleTaskKeys.add(t.title.trim().toLowerCase());
+      if (isLoggableRoutineTask(t)) {
+        scheduleTaskKeys.add(t.title.trim().toLowerCase());
+      }
     }
   }
 
@@ -917,6 +962,7 @@ export function cleanZeroHourTasksFromHistory(
     for (const week of month.weeks || []) {
       for (const day of week.days || []) {
         day.tasks = (day.tasks || []).filter((t) => {
+          if (!isLoggableRoutineTask(t)) return false;
           const hasTime = (t.timeSpentMinutes || 0) > 0;
           const isDone = !!t.completed;
           const key = t.title.trim().toLowerCase();
@@ -1086,9 +1132,10 @@ export function adjustTaskAuditTime(
 
 // Compute per-task time calculation audit across all history, custom schedules, and direct audit entries
 // A task appears in the audit IF AND ONLY IF:
-// - It currently exists in the schedule (active or parked, one-time or repetitive)
-// - OR, if removed from the schedule, it had actual work logged (totalTimeMinutes > 0 or completed)
-// - OR has direct audit time allocated to it
+// - It is a genuine routine task (NOT a scratchpad note, untimed to-do, or timed notice)
+// - AND currently exists in the schedule (active or parked, one-time or repetitive)
+//   OR had actual logged work in history
+//   OR has direct audit time allocated to it
 export function computeTaskTimeAudit(
   schedules: Record<string, DaySchedule>,
   history: MonthLogRecord[]
@@ -1096,9 +1143,10 @@ export function computeTaskTimeAudit(
   const auditMap: Map<string, TaskTimeAuditItem> = new Map();
   const scheduleTaskKeys = new Set<string>();
 
-  // 1. Collect all known tasks from current active schedules
+  // 1. Collect all known tasks from current active schedules (EXCLUDING scratchpad notes, untimed to-dos, and timed notices)
   for (const sched of Object.values(schedules)) {
     for (const t of sched.tasks) {
+      if (!isLoggableRoutineTask(t)) continue;
       const key = t.title.trim().toLowerCase();
       scheduleTaskKeys.add(key);
 
@@ -1122,6 +1170,7 @@ export function computeTaskTimeAudit(
     for (const week of month.weeks) {
       for (const day of week.days) {
         for (const t of day.tasks) {
+          if (!isLoggableRoutineTask(t)) continue;
           const key = t.title.trim().toLowerCase();
           const timeWorked = t.timeSpentMinutes || 0;
           const isDone = !!t.completed;

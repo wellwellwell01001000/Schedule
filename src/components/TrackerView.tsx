@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { TaskItem, TaskCategory, DayKey, DaySchedule, AsciiBarStyle } from '../types';
+import { TaskItem, TaskCategory, DayKey, DaySchedule, AsciiBarStyle, TaskType } from '../types';
 import { generateAsciiProgressBar, getDayKeyFromDate, getDateForDayKey, getTodayDateStr } from '../utils/ascii';
 import {
   formatMinutes,
@@ -10,6 +10,7 @@ import {
   getDateTrackedTimeMap,
   addTimeToDateTask,
   cleanZeroHourTasksFromHistory,
+  isLoggableRoutineTask,
 } from '../data/historyStore';
 import { PomodoroTimer, PomodoroTimerHandle } from './PomodoroTimer';
 import { playCustomOrFallbackSound } from '../data/soundStore';
@@ -30,9 +31,11 @@ import { RecurringTaskActionModal, TaskActionMode } from './RecurringTaskActionM
 import { RecurringRoutinesManagerModal } from './RecurringRoutinesManagerModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
+import { NoticeTimePicker } from './NoticeTimePicker';
 import { CategorySelect } from './CategorySelect';
 import { getCategoryLabel } from '../data/categoryStore';
 import { setLocalLastModified } from '../services/driveVaultService';
+import { parseSingleNoticeTime } from '../utils/timePickerUtils';
 
 interface TrackerViewProps {
   selectedDay: string;
@@ -108,6 +111,36 @@ export function TrackerView({
     setDateTrackedTimeMap(getDateTrackedTimeMap(selectedDateStr));
   }, [selectedDateStr]);
 
+  // Self-repair: Ensure any timed_note tasks that were saved with 'ANYTIME' get a valid 14:00 time
+  useEffect(() => {
+    let hasRepairs = false;
+    const repairedSchedules = { ...schedules };
+    for (const [dayKey, sched] of Object.entries(repairedSchedules)) {
+      if (!sched?.tasks) continue;
+      let dayChanged = false;
+      const newTasks = sched.tasks.map((task) => {
+        if (task.taskType === 'timed_note' && (!task.time || task.time.trim().toUpperCase() === 'ANYTIME')) {
+          dayChanged = true;
+          hasRepairs = true;
+          return { ...task, time: '14:00', durationMinutes: 0, isUntimed: false, isCheckable: false };
+        }
+        return task;
+      });
+      if (dayChanged) {
+        repairedSchedules[dayKey] = {
+          ...sched,
+          tasks: sortTasksByStartTime(newTasks),
+        };
+      }
+    }
+    if (hasRepairs) {
+      onUpdateSchedules(repairedSchedules);
+    }
+    // Clean any legacy scratchpad notes/to-dos from historical records
+    cleanZeroHourTasksFromHistory(repairedSchedules);
+    onRefreshHistory();
+  }, []);
+
   const [asciiStyle, setAsciiStyle] = useState<AsciiBarStyle>('blocks');
   const [barWidth, setBarWidth] = useState<number>(22);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -122,6 +155,11 @@ export function TrackerView({
   const [newIsRepetitive, setNewIsRepetitive] = useState(false);
   const [newRepeatDays, setNewRepeatDays] = useState<DayKey[]>([selectedDay as DayKey]);
   const [newIsScheduled, setNewIsScheduled] = useState(true);
+  const [newTaskType, setNewTaskType] = useState<TaskType>('timed_routine');
+
+  // Daily Scratchpad inline fast-entry state
+  const [scratchpadInput, setScratchpadInput] = useState('');
+  const [scratchpadIsNote, setScratchpadIsNote] = useState(false);
 
   // Recurring Task Action Modal state (Deschedule / Delete choices)
   const [actionModalOpen, setActionModalOpen] = useState(false);
@@ -194,14 +232,16 @@ export function TrackerView({
     saveCompletedTaskIdsForDate(selectedDateStr, newIds);
     setLocalLastModified();
 
-    // Map tasks with date-scoped time spent for syncing to history
-    const tasksWithDateTrackedTime = activeDayTasks.map((t) => ({
-      ...t,
-      timeSpentMinutes: dateTrackedTimeMap[t.id] || 0,
-    }));
+    // Map routine tasks with date-scoped time spent for syncing to history (notes, untimed to-dos, and milestone notices are excluded)
+    const routineTasksWithTime = activeDayTasks
+      .filter(isLoggableRoutineTask)
+      .map((t) => ({
+        ...t,
+        timeSpentMinutes: dateTrackedTimeMap[t.id] || 0,
+      }));
 
     // Sync to selected day's exact calendar date (ensuring past weeks remain preserved)
-    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, tasksWithDateTrackedTime, newIds);
+    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, routineTasksWithTime, newIds);
     onRefreshHistory();
   };
 
@@ -362,11 +402,13 @@ export function TrackerView({
       }
     }
 
-    // Attach updated date-scoped time spent for syncing to history
-    const tasksWithDateTrackedTime = activeDayTasks.map((t) => ({
-      ...t,
-      timeSpentMinutes: updatedMap[t.id] || 0,
-    }));
+    // Attach updated date-scoped time spent for syncing to history (excluding non-routine notes, untimed to-dos, and notices)
+    const tasksWithDateTrackedTime = activeDayTasks
+      .filter(isLoggableRoutineTask)
+      .map((t) => ({
+        ...t,
+        timeSpentMinutes: updatedMap[t.id] || 0,
+      }));
 
     syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, tasksWithDateTrackedTime, completedTaskIds);
     onRefreshHistory();
@@ -487,20 +529,32 @@ export function TrackerView({
     e.preventDefault();
     if (!newTitle.trim()) return;
 
+    const isUntimed = newTaskType === 'untimed_checklist' || newTaskType === 'untimed_note';
+    const isCheckable = newTaskType === 'timed_routine' || newTaskType === 'untimed_checklist';
+    const singleStartTime = parseSingleNoticeTime(newTimeSlot).formatted;
+    const computedTime = isUntimed
+      ? 'ANYTIME'
+      : newTaskType === 'timed_note'
+      ? singleStartTime
+      : newTimeSlot.trim() || '19:00 – 20:00';
+
     const newTaskId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newTask: TaskItem = {
       id: newTaskId,
       title: newTitle.trim(),
       category: newCategory,
-      time: newTimeSlot.trim() || '19:00 – 20:00',
-      durationMinutes: newDuration > 0 ? newDuration : 45,
+      time: computedTime,
+      durationMinutes: isUntimed || newTaskType === 'timed_note' ? 0 : (newDuration > 0 ? newDuration : 45),
       timeSpentMinutes: 0,
-      details: newDetails.trim() || 'Custom created task item.',
+      details: newDetails.trim() || (isUntimed ? 'Scratchpad item.' : 'Custom created task item.'),
       isScheduled: newIsScheduled,
       isRepetitive: newIsRepetitive,
       repeatDays: newIsRepetitive ? newRepeatDays : [selectedDay as DayKey],
       isCustom: true,
       oneTimeDate: newIsRepetitive ? undefined : selectedDateStr,
+      taskType: newTaskType,
+      isCheckable,
+      isUntimed,
     };
 
     const targetDays = newIsRepetitive ? newRepeatDays : [selectedDay as DayKey];
@@ -516,33 +570,128 @@ export function TrackerView({
     }
 
     onUpdateSchedules(updatedSchedules);
-    const dayTasks = (updatedSchedules[selectedDay]?.tasks || []).filter((t) =>
-      isTaskActiveForDate(t, selectedDateStr)
-    );
-    syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, dayTasks, completedTaskIds);
-    onRefreshHistory();
+    if (isLoggableRoutineTask(newTask)) {
+      const dayTasks = (updatedSchedules[selectedDay]?.tasks || [])
+        .filter((t) => isTaskActiveForDate(t, selectedDateStr))
+        .filter(isLoggableRoutineTask);
+      syncDayActionToHistory(selectedDateStr, selectedDay as DayKey, dayTasks, completedTaskIds);
+      onRefreshHistory();
+    }
 
     // Reset form
     setNewTitle('');
     setNewDetails('');
+    setNewTaskType('timed_routine');
     setIsAddingTask(false);
   };
 
-  // Scheduled tasks count vs total - strictly sorted by start time for this specific day and date
+  // Quick inline add for Scratchpad To-Dos and Notes (no logging to history or audit)
+  const handleQuickAddScratchpad = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scratchpadInput.trim()) return;
+
+    const newTaskId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const taskType: TaskType = scratchpadIsNote ? 'untimed_note' : 'untimed_checklist';
+    const newTask: TaskItem = {
+      id: newTaskId,
+      title: scratchpadInput.trim(),
+      category: 'work',
+      time: 'ANYTIME',
+      durationMinutes: 0,
+      timeSpentMinutes: 0,
+      details: scratchpadIsNote ? 'Daily reference note.' : 'Untimed to-do item.',
+      isScheduled: true,
+      isRepetitive: false,
+      repeatDays: [selectedDay as DayKey],
+      isCustom: true,
+      oneTimeDate: selectedDateStr,
+      taskType,
+      isCheckable: !scratchpadIsNote,
+      isUntimed: true,
+    };
+
+    const updatedSchedules = { ...schedules };
+    if (updatedSchedules[selectedDay]) {
+      updatedSchedules[selectedDay] = {
+        ...updatedSchedules[selectedDay],
+        tasks: [...updatedSchedules[selectedDay].tasks, newTask],
+      };
+    }
+
+    onUpdateSchedules(updatedSchedules);
+    setScratchpadInput('');
+    setToastMessage(`[SCRATCHPAD ADDED]: "${newTask.title}" added to today's scratchpad.`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // Quick toggle untimed task between checkable to-do and pure note (no logging to history or audit)
+  const handleToggleUntimedType = (task: TaskItem) => {
+    const isCurrentlyCheckable = task.taskType !== 'untimed_note' && task.isCheckable !== false;
+    const newType: TaskType = isCurrentlyCheckable ? 'untimed_note' : 'untimed_checklist';
+    const updatedSchedules = { ...schedules };
+    if (updatedSchedules[selectedDay]) {
+      updatedSchedules[selectedDay] = {
+        ...updatedSchedules[selectedDay],
+        tasks: updatedSchedules[selectedDay].tasks.map((t) =>
+          t.id === task.id ? { ...t, taskType: newType, isCheckable: !isCurrentlyCheckable } : t
+        ),
+      };
+    }
+    onUpdateSchedules(updatedSchedules);
+  };
+
+  // Untimed tasks (Daily Scratchpad) active on this calendar date
+  const untimedTasks = useMemo(() => {
+    return activeDayTasks.filter(
+      (t) => t.isUntimed === true || t.taskType === 'untimed_checklist' || t.taskType === 'untimed_note'
+    );
+  }, [activeDayTasks]);
+
+  // Timed timeline tasks (strictly tasks with a time slot / not untimed)
   const scheduledTasks = useMemo(() => {
-    return sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled !== false));
+    return sortTasksByStartTime(
+      activeDayTasks.filter(
+        (t) =>
+          t.isScheduled !== false &&
+          !t.isUntimed &&
+          t.taskType !== 'untimed_checklist' &&
+          t.taskType !== 'untimed_note'
+      )
+    );
   }, [activeDayTasks]);
 
   const descheduledTasks = useMemo(() => {
-    return sortTasksByStartTime(activeDayTasks.filter((t) => t.isScheduled === false));
+    return sortTasksByStartTime(
+      activeDayTasks.filter(
+        (t) =>
+          t.isScheduled === false &&
+          !t.isUntimed &&
+          t.taskType !== 'untimed_checklist' &&
+          t.taskType !== 'untimed_note'
+      )
+    );
   }, [activeDayTasks]);
 
-  const completedCount = scheduledTasks.filter((t) => completedTaskIds.includes(t.id)).length;
-  const totalTasks = scheduledTasks.length;
+  // Core routine tasks that require completion (excludes timed_note, which are informational notices with no checkboxes)
+  const coreRoutineTasks = useMemo(() => {
+    return scheduledTasks.filter(
+      (t) => t.taskType !== 'timed_note' && t.isCheckable !== false
+    );
+  }, [scheduledTasks]);
+
+  const completedCount = coreRoutineTasks.filter((t) => completedTaskIds.includes(t.id)).length;
+  const totalTasks = coreRoutineTasks.length;
   const percentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
 
-  // Uncompleted scheduled tasks
-  const pendingScheduledTasks = scheduledTasks.filter((t) => !completedTaskIds.includes(t.id));
+  // Untimed stats
+  const untimedChecklistTasks = useMemo(() => {
+    return untimedTasks.filter((t) => t.taskType !== 'untimed_note' && t.isCheckable !== false);
+  }, [untimedTasks]);
+  const untimedCompletedCount = untimedChecklistTasks.filter((t) => completedTaskIds.includes(t.id)).length;
+  const untimedTotalCount = untimedChecklistTasks.length;
+
+  // Uncompleted scheduled routine tasks
+  const pendingScheduledTasks = coreRoutineTasks.filter((t) => !completedTaskIds.includes(t.id));
 
   // Current real-time clock
   const currentMinutes = currentClock.getHours() * 60 + currentClock.getMinutes();
@@ -654,6 +803,17 @@ export function TrackerView({
         (t.details && t.details.toLowerCase().includes(q))
     );
   }, [descheduledTasks, filterQuery]);
+
+  const filteredUntimedTasks = useMemo(() => {
+    if (!filterQuery.trim()) return untimedTasks;
+    const q = filterQuery.toLowerCase().trim();
+    return untimedTasks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q) ||
+        (t.details && t.details.toLowerCase().includes(q))
+    );
+  }, [untimedTasks, filterQuery]);
 
   // Keyboard shortcuts listener for Tracker View actions: Space (Timer), X (Done), L (+15m), R (Reset), N (New), / (Filter)
   useEffect(() => {
@@ -1071,6 +1231,83 @@ export function TrackerView({
           </div>
 
           <form onSubmit={handleAddTaskSubmit} className="space-y-4 text-xs">
+            {/* Task Type / Behavior Selection */}
+            <div className="space-y-1.5 border border-white/30 p-2.5 bg-white/5">
+              <span className="text-[10px] opacity-70 uppercase font-bold block">
+                TASK TYPE &amp; TRACKING MODE:
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTaskType('timed_routine');
+                    if (newTimeSlot === 'ANYTIME' || !newTimeSlot.includes('–')) {
+                      setNewTimeSlot('19:00 – 20:00');
+                      setNewDuration(60);
+                    }
+                  }}
+                  className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                    newTaskType === 'timed_routine'
+                      ? 'bg-white text-black border-white'
+                      : 'border-white/30 text-white/70 hover:border-white'
+                  }`}
+                >
+                  [ROUTINE (TIMED)]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTaskType('timed_note');
+                    setNewTimeSlot(parseSingleNoticeTime(newTimeSlot).formatted);
+                    setNewDuration(0);
+                  }}
+                  className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                    newTaskType === 'timed_note'
+                      ? 'bg-white text-black border-white'
+                      : 'border-white/30 text-white/70 hover:border-white'
+                  }`}
+                >
+                  [TIMED NOTICE]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTaskType('untimed_checklist');
+                    setNewTimeSlot('ANYTIME');
+                    setNewDuration(0);
+                  }}
+                  className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                    newTaskType === 'untimed_checklist'
+                      ? 'bg-white text-black border-white'
+                      : 'border-white/30 text-white/70 hover:border-white'
+                  }`}
+                >
+                  [CHECKLIST ITEM]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTaskType('untimed_note');
+                    setNewTimeSlot('ANYTIME');
+                    setNewDuration(0);
+                  }}
+                  className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                    newTaskType === 'untimed_note'
+                      ? 'bg-white text-black border-white'
+                      : 'border-white/30 text-white/70 hover:border-white'
+                  }`}
+                >
+                  [DAILY NOTE]
+                </button>
+              </div>
+              <p className="text-[9px] opacity-60">
+                {newTaskType === 'timed_routine' && 'Timed schedule routine with full stopwatch, Pomodoro, and progress tracking.'}
+                {newTaskType === 'timed_note' && 'Milestone notice at a specific time in the schedule. No timers, no checkboxes.'}
+                {newTaskType === 'untimed_checklist' && 'All-day to-do in the daily scratchpad. Checkable [ ] / [X], does not affect routine progress.'}
+                {newTaskType === 'untimed_note' && 'All-day pure text reference note in the scratchpad (no checkbox, no timers).'}
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-[11px] opacity-70 uppercase font-bold block">
@@ -1093,17 +1330,37 @@ export function TrackerView({
               />
             </div>
 
-            {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
-            <div className="space-y-1">
-              <TaskTimeBlockPicker
-                timeSlot={newTimeSlot}
-                durationMinutes={newDuration}
-                onChange={(newSlot, newDur) => {
-                  setNewTimeSlot(newSlot);
-                  setNewDuration(newDur);
-                }}
-              />
-            </div>
+            {/* Time Assignment based on Mode */}
+            {newTaskType === 'timed_note' ? (
+              <div className="space-y-1">
+                <NoticeTimePicker
+                  time={newTimeSlot}
+                  onChange={(newT) => {
+                    setNewTimeSlot(newT);
+                    setNewDuration(0);
+                  }}
+                />
+                <span className="text-[10px] opacity-60 font-mono block">
+                  [APPEARS AS A HORIZONTAL MILESTONE LINE AT THIS EXACT TIME]
+                </span>
+              </div>
+            ) : newTaskType === 'timed_routine' ? (
+              <div className="space-y-1">
+                <TaskTimeBlockPicker
+                  timeSlot={newTimeSlot}
+                  durationMinutes={newDuration}
+                  onChange={(newSlot, newDur) => {
+                    setNewTimeSlot(newSlot);
+                    setNewDuration(newDur);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="border border-white/20 p-2.5 bg-white/5 flex items-center justify-between text-xs">
+                <span className="opacity-70 uppercase font-bold text-[10px]">TIME ASSIGNMENT:</span>
+                <span className="font-mono text-white/80 font-bold">[ANYTIME // ALL-DAY SCRATCHPAD]</span>
+              </div>
+            )}
 
             {/* Recurrence Type */}
             <div className="border border-white/20 p-3 bg-white/5 space-y-2">
@@ -1242,14 +1499,172 @@ export function TrackerView({
 
       {/* Main Two-Column Editorial Grid */}
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left Column: _TIMELINE_LOG */}
-        <section className="flex-1 flex flex-col border border-white bg-black">
-          <div className="bg-white text-black text-sm px-4 py-1 font-bold flex items-center justify-between">
-            <span>_TIMELINE_LOG</span>
-            <span className="text-xs opacity-75 font-mono font-normal">
-              [{completedCount}/{totalTasks} COMPLETED]
-            </span>
-          </div>
+        {/* Left Column: _DAILY_SCRATCHPAD & _TIMELINE_LOG */}
+        <div className="flex-1 flex flex-col gap-6">
+          {/* _DAILY_SCRATCHPAD // UNTIMED TO-DOS & NOTES */}
+          <section className="border border-white bg-black">
+            <div className="bg-white text-black text-xs px-4 py-1.5 font-bold flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 bg-black inline-block" />
+                <span className="tracking-wider">_DAILY_SCRATCHPAD // UNTIMED TO-DOS &amp; NOTES</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-mono font-bold">
+                  [{untimedCompletedCount}/{untimedTotalCount} COMPLETED]
+                </span>
+                <span className="text-[9px] uppercase opacity-75">
+                  {currentSchedule.dayName.toUpperCase()}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-3 font-mono text-xs">
+              {/* Fast Inline Entry Input */}
+              <form onSubmit={handleQuickAddScratchpad} className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1 flex items-center border border-white/60 bg-black focus-within:border-white px-3">
+                  <input
+                    type="text"
+                    value={scratchpadInput}
+                    onChange={(e) => setScratchpadInput(e.target.value)}
+                    placeholder={
+                      scratchpadIsNote
+                        ? 'Quick note / memo (Enter to save)...'
+                        : 'Quick untimed to-do item (Enter to save)...'
+                    }
+                    className="w-full bg-transparent py-1.5 text-xs text-white focus:outline-none placeholder:text-white/40"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setScratchpadIsNote(!scratchpadIsNote)}
+                    className={`border px-2.5 py-1.5 text-[10px] font-bold uppercase transition-none cursor-pointer ${
+                      scratchpadIsNote
+                        ? 'border-white bg-white text-black'
+                        : 'border-white/40 text-white/70 hover:border-white hover:text-white'
+                    }`}
+                    title="Toggle between Checkable To-Do and Pure Reference Note"
+                  >
+                    {scratchpadIsNote ? '[TYPE: NOTE]' : '[TYPE: TO-DO]'}
+                  </button>
+                  <button
+                    type="submit"
+                    className="border border-white bg-white text-black px-3 py-1.5 text-[10px] font-bold hover:bg-white/90 uppercase transition-none cursor-pointer"
+                  >
+                    [+ ADD]
+                  </button>
+                </div>
+              </form>
+
+              {/* List of Untimed Scratchpad Items */}
+              {filteredUntimedTasks.length === 0 ? (
+                <div className="p-3 border border-dashed border-white/20 text-center text-[11px] opacity-60">
+                  NO ALL-DAY TO-DOS OR NOTES LOGGED FOR TODAY. USE QUICK-ADD ABOVE.
+                </div>
+              ) : (
+                <div className="divide-y divide-white/10 border border-white/30 bg-black">
+                  {filteredUntimedTasks.map((task) => {
+                    const isCompleted = completedTaskIds.includes(task.id);
+                    const isPureNote = task.taskType === 'untimed_note' || task.isCheckable === false;
+
+                    return (
+                      <div
+                        key={task.id}
+                        className={`p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-none ${
+                          isCompleted && !isPureNote
+                            ? 'bg-white/5 opacity-50'
+                            : 'bg-black hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                          {isPureNote ? (
+                            <span className="text-[10px] px-1.5 py-0.5 border border-white/40 text-white/70 font-mono font-bold shrink-0">
+                              // NOTE
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => toggleTaskCompletion(task.id)}
+                              className={`text-[10px] px-1.5 py-0.5 border font-mono font-bold shrink-0 cursor-pointer transition-none ${
+                                isCompleted
+                                  ? 'bg-white text-black border-white'
+                                  : 'border-white/60 text-white hover:border-white'
+                              }`}
+                              title="Click to toggle to-do completion"
+                            >
+                              {isCompleted ? '[X]' : '[ ]'}
+                            </button>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-xs font-bold tracking-tight break-words ${
+                                  isCompleted && !isPureNote ? 'line-through text-white/60' : 'text-white'
+                                }`}
+                              >
+                                {task.title}
+                              </span>
+                              <span className="text-[9px] uppercase border border-white/30 px-1 py-0 opacity-70">
+                                {getCategoryLabel(task.category)}
+                              </span>
+                              <span className="text-[9px] uppercase opacity-50 font-mono">
+                                [ALL-DAY]
+                              </span>
+                            </div>
+                            {task.details &&
+                              task.details !== 'Untimed to-do item.' &&
+                              task.details !== 'Daily reference note.' &&
+                              task.details !== 'Scratchpad item.' && (
+                                <p className="text-[10px] opacity-65 mt-0.5 leading-relaxed">
+                                  {task.details}
+                                </p>
+                              )}
+                          </div>
+                        </div>
+
+                        {/* Quick actions: Toggle Note/Checklist, Edit, Delete */}
+                        <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleUntimedType(task)}
+                            className="border border-white/30 px-1.5 py-0.5 text-[9px] text-white/70 hover:text-white hover:border-white uppercase cursor-pointer"
+                            title={isPureNote ? 'Convert to checkable to-do' : 'Convert to pure note (remove checkbox)'}
+                          >
+                            {isPureNote ? '[MAKE TO-DO]' : '[MAKE NOTE]'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenEditModal(task, e)}
+                            className="border border-white/40 px-1.5 py-0.5 text-[9px] text-white hover:bg-white hover:text-black uppercase cursor-pointer"
+                          >
+                            [EDIT]
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleRequestDelete(task, e)}
+                            className="border border-white/30 px-1.5 py-0.5 text-[9px] text-white/70 hover:bg-white hover:text-black uppercase cursor-pointer"
+                          >
+                            [DEL]
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* _TIMELINE_LOG */}
+          <section className="flex-1 flex flex-col border border-white bg-black">
+            <div className="bg-white text-black text-sm px-4 py-1 font-bold flex items-center justify-between">
+              <span>_TIMELINE_LOG</span>
+              <span className="text-xs opacity-75 font-mono font-normal">
+                [{completedCount}/{totalTasks} COMPLETED]
+              </span>
+            </div>
 
           <div className="p-4 md:p-6 space-y-4 flex-1">
             {/* _CURRENT_DIRECTIVE: WHAT TO DO RIGHT NOW */}
@@ -1543,6 +1958,56 @@ export function TrackerView({
                   const timeSpent = dateTrackedTimeMap[task.id] || 0;
                   const matches = findRoutineMatches(task, schedules);
                   const isRecurringAcrossDays = matches.length > 1;
+                  const isNotice = task.taskType === 'timed_note';
+
+                  // Timed Notice: Render as a sleek milestone divider line between tasks (not a box)
+                  if (isNotice) {
+                    const noticeDisplayTime = parseSingleNoticeTime(task.time).formatted;
+                    return (
+                      <div
+                        key={task.id}
+                        className="py-2.5 my-1 flex items-center gap-2 font-mono group"
+                      >
+                        <div className="h-px bg-white/40 flex-grow" />
+                        <div className="flex flex-wrap items-center gap-2 px-3 py-1 bg-black border border-white/50 text-xs shrink-0">
+                          <span className="font-bold text-white bg-white/20 border border-white/40 px-1.5 py-0.5 text-[10px]">
+                            {noticeDisplayTime}
+                          </span>
+                          <span className="text-white/40 font-bold">//</span>
+                          <span className="font-bold tracking-tight text-white uppercase text-xs">
+                            {task.title}
+                          </span>
+                          {task.details &&
+                            task.details !== 'Custom created task item.' &&
+                            task.details !== 'Scratchpad item.' && (
+                              <span className="text-[11px] text-white/70 font-normal">
+                                — {task.details}
+                              </span>
+                            )}
+                          <span className="text-[9px] uppercase border border-white/20 px-1 py-0 text-white/50">
+                            {getCategoryLabel(task.category)}
+                          </span>
+                          <div className="flex items-center gap-1.5 ml-1 border-l border-white/20 pl-2">
+                            <button
+                              onClick={(e) => handleOpenEditModal(task, e)}
+                              className="text-[10px] text-white/70 hover:text-white uppercase font-bold cursor-pointer"
+                              title="Edit milestone notice"
+                            >
+                              [EDIT]
+                            </button>
+                            <button
+                              onClick={(e) => handleRequestDelete(task, e)}
+                              className="text-[10px] text-white/70 hover:text-white uppercase font-bold cursor-pointer"
+                              title="Delete milestone notice"
+                            >
+                              [DEL]
+                            </button>
+                          </div>
+                        </div>
+                        <div className="h-px bg-white/40 flex-grow" />
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
@@ -1859,6 +2324,7 @@ export function TrackerView({
             </div>
           </div>
         </section>
+        </div>
 
         {/* Right Column: _SYSTEM_STATS & TIME LOGGED SUMMARY */}
         <section className="w-full lg:w-80 flex flex-col gap-6">
@@ -1880,7 +2346,7 @@ export function TrackerView({
               <div className="grid grid-cols-2 gap-2 text-xs border-t border-white/20 pt-3">
                 <div>
                   <span className="opacity-50 text-[10px] uppercase block">Scheduled:</span>
-                  <span className="font-bold text-white">{scheduledTasks.length} tasks</span>
+                  <span className="font-bold text-white">{totalTasks} tasks</span>
                 </div>
                 <div>
                   <span className="opacity-50 text-[10px] uppercase block">Completed:</span>
@@ -1889,6 +2355,15 @@ export function TrackerView({
                   </span>
                 </div>
               </div>
+
+              {untimedTotalCount > 0 && (
+                <div className="border-t border-white/20 pt-2 flex items-center justify-between text-xs font-mono">
+                  <span className="opacity-60 text-[10px] uppercase">Scratchpad Items:</span>
+                  <span className="font-bold text-white">
+                    {untimedCompletedCount} / {untimedTotalCount} checked
+                  </span>
+                </div>
+              )}
 
               {/* ASCII style switcher */}
               <div className="border-t border-white/20 pt-3 space-y-2">
@@ -1922,7 +2397,7 @@ export function TrackerView({
           {/* Card 2: _POMODORO_SESSION_ENGINE */}
           <PomodoroTimer
             ref={pomodoroRef}
-            scheduledTasks={scheduledTasks}
+            scheduledTasks={coreRoutineTasks}
             activeFocusTaskId={currentFocusTask?.id}
             onLogMinutesToTask={(taskId, mins) => {
               handleAdjustTime(taskId, mins);

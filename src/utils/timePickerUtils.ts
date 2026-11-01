@@ -12,6 +12,24 @@ export function minutesToTimeString(minutes: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+export function parseSingleNoticeTime(timeStr?: string): { hour: number; minute: number; formatted: string } {
+  if (!timeStr || timeStr.trim().toUpperCase() === 'ANYTIME') {
+    return { hour: 14, minute: 0, formatted: '14:00' };
+  }
+  const parsed = parseStartTimeMinutes(timeStr);
+  if (parsed === Number.MAX_SAFE_INTEGER) {
+    return { hour: 14, minute: 0, formatted: '14:00' };
+  }
+  const norm = ((parsed % 1440) + 1440) % 1440;
+  const h = Math.floor(norm / 60);
+  const m = norm % 60;
+  return {
+    hour: h,
+    minute: m,
+    formatted: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+  };
+}
+
 export function minutesTo12HourString(minutes: number): string {
   const norm = ((minutes % 1440) + 1440) % 1440;
   let h = Math.floor(norm / 60);

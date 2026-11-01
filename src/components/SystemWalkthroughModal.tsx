@@ -246,6 +246,16 @@ export function SystemWalkthroughModal({
                     Press <code className="text-white">[N]</code> to slide open the top New Task specification panel, or press <code className="text-white">[B]</code> to paste a multi-line batch schedule. Press <code className="text-white">[/]</code> anytime for instant search &amp; query filtering.
                   </p>
                 </div>
+
+                <div className="border border-white/40 p-3 bg-white/5 space-y-1">
+                  <div className="font-bold text-white uppercase flex items-center justify-between">
+                    <span>4. UNTIMED SCRATCHPAD &amp; TIMED NOTICES</span>
+                    <span className="font-mono text-[10px] opacity-60">[SCRATCHPAD &amp; NOTICES]</span>
+                  </div>
+                  <p className="opacity-75 leading-relaxed text-[11px]">
+                    Add all-day checklist to-dos <code className="text-white">[ ] / [X]</code> or pure text notes <code className="text-white">// NOTE</code> directly to your <strong>_DAILY_SCRATCHPAD</strong> via fast inline entry without skewing routine progress percentages. Or schedule informational notices in your timeline that require no timers or checkboxes.
+                  </p>
+                </div>
               </div>
             </div>
           )}

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { TaskItem, TaskCategory, DayKey, DaySchedule } from '../types';
+import { TaskItem, TaskCategory, DayKey, DaySchedule, TaskType } from '../types';
 import { findRoutineMatches, TaskDayMatch } from '../utils/taskRecurrence';
 import { getDateForDayKey } from '../utils/ascii';
 import { TaskTimeBlockPicker } from './TaskTimeBlockPicker';
+import { NoticeTimePicker } from './NoticeTimePicker';
 import { CategorySelect } from './CategorySelect';
+import { parseSingleNoticeTime } from '../utils/timePickerUtils';
 
 interface EditTaskModalProps {
   isOpen: boolean;
@@ -28,6 +30,7 @@ export function EditTaskModal({
   schedules,
   onSave,
 }: EditTaskModalProps) {
+  const [taskType, setTaskType] = useState<TaskType>('timed_routine');
   const [title, setTitle] = useState('');
   const [category, setNewCategory] = useState<TaskCategory>('custom');
   const [timeSlot, setTimeSlot] = useState('');
@@ -42,10 +45,20 @@ export function EditTaskModal({
   useEffect(() => {
     if (!task || !isOpen) return;
 
+    const initialType: TaskType = task.taskType
+      ? task.taskType
+      : task.isUntimed
+      ? (task.isCheckable === false ? 'untimed_note' : 'untimed_checklist')
+      : (task.isCheckable === false ? 'timed_note' : 'timed_routine');
+    setTaskType(initialType);
+
     setTitle(task.title || '');
     setNewCategory(task.category || 'custom');
-    setTimeSlot(task.time || '');
-    setDuration(task.durationMinutes || 45);
+    const initTime = initialType === 'timed_note'
+      ? parseSingleNoticeTime(task.time).formatted
+      : (task.time || '');
+    setTimeSlot(initTime);
+    setDuration(task.durationMinutes || (initialType === 'timed_note' ? 0 : 45));
     setDetails(task.details || '');
     setIsRepetitive(task.isRepetitive !== false);
     setIsScheduled(task.isScheduled !== false);
@@ -66,15 +79,27 @@ export function EditTaskModal({
     e.preventDefault();
     if (!title.trim()) return;
 
+    const isUntimed = taskType === 'untimed_checklist' || taskType === 'untimed_note';
+    const isCheckable = taskType === 'timed_routine' || taskType === 'untimed_checklist';
+    const singleStartTime = parseSingleNoticeTime(timeSlot).formatted;
+    const computedTime = isUntimed
+      ? 'ANYTIME'
+      : taskType === 'timed_note'
+      ? singleStartTime
+      : timeSlot.trim() || task.time;
+
     const updatedFields: Partial<TaskItem> = {
       title: title.trim(),
       category,
-      time: timeSlot.trim() || task.time,
-      durationMinutes: duration > 0 ? duration : 45,
+      time: computedTime,
+      durationMinutes: isUntimed || taskType === 'timed_note' ? 0 : (duration > 0 ? duration : 45),
       details: details.trim(),
       isRepetitive,
       isScheduled,
       oneTimeDate: isRepetitive ? undefined : (task.oneTimeDate || getDateForDayKey(currentDayKey)),
+      taskType,
+      isCheckable,
+      isUntimed,
     };
 
     onSave(updatedFields, scope, isRepetitive ? repeatDays : [currentDayKey]);
@@ -110,6 +135,69 @@ export function EditTaskModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 md:p-6 space-y-4 text-xs">
+          {/* Task Type / Behavior Selection */}
+          <div className="space-y-1.5 border border-white/30 p-2.5 bg-white/5">
+            <span className="text-[10px] opacity-70 uppercase font-bold block">
+              TASK TYPE &amp; TRACKING MODE:
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setTaskType('timed_routine')}
+                className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                  taskType === 'timed_routine'
+                    ? 'bg-white text-black border-white'
+                    : 'border-white/30 text-white/70 hover:border-white'
+                }`}
+              >
+                [ROUTINE (TIMED)]
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTaskType('timed_note');
+                  setTimeSlot(parseSingleNoticeTime(timeSlot).formatted);
+                  setDuration(0);
+                }}
+                className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                  taskType === 'timed_note'
+                    ? 'bg-white text-black border-white'
+                    : 'border-white/30 text-white/70 hover:border-white'
+                }`}
+              >
+                [TIMED NOTICE]
+              </button>
+              <button
+                type="button"
+                onClick={() => setTaskType('untimed_checklist')}
+                className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                  taskType === 'untimed_checklist'
+                    ? 'bg-white text-black border-white'
+                    : 'border-white/30 text-white/70 hover:border-white'
+                }`}
+              >
+                [CHECKLIST ITEM]
+              </button>
+              <button
+                type="button"
+                onClick={() => setTaskType('untimed_note')}
+                className={`px-2 py-1.5 text-[10px] font-bold border text-center transition-none cursor-pointer uppercase ${
+                  taskType === 'untimed_note'
+                    ? 'bg-white text-black border-white'
+                    : 'border-white/30 text-white/70 hover:border-white'
+                }`}
+              >
+                [DAILY NOTE]
+              </button>
+            </div>
+            <p className="text-[9px] opacity-60">
+              {taskType === 'timed_routine' && 'Timed schedule routine with full stopwatch, Pomodoro, and progress tracking.'}
+              {taskType === 'timed_note' && 'Milestone notice at a specific time in the schedule. Displays as a dividing line.'}
+              {taskType === 'untimed_checklist' && 'All-day to-do in the daily scratchpad. Checkable [ ] / [X], does not affect routine progress.'}
+              {taskType === 'untimed_note' && 'All-day pure text reference note in the scratchpad (no checkbox, no timers).'}
+            </p>
+          </div>
+
           {/* Title & Category */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -131,17 +219,32 @@ export function EditTaskModal({
             />
           </div>
 
-          {/* Interactive Start & End Time Blocks with Synchronized Estimate */}
-          <div className="space-y-1">
-            <TaskTimeBlockPicker
-              timeSlot={timeSlot}
-              durationMinutes={duration}
-              onChange={(newSlot, newDur) => {
-                setTimeSlot(newSlot);
-                setDuration(newDur);
+          {/* Time Assignment based on Mode */}
+          {taskType === 'timed_note' ? (
+            <NoticeTimePicker
+              time={timeSlot}
+              onChange={(newTime) => {
+                setTimeSlot(newTime);
+                setDuration(0);
               }}
             />
-          </div>
+          ) : taskType === 'timed_routine' ? (
+            <div className="space-y-1">
+              <TaskTimeBlockPicker
+                timeSlot={timeSlot}
+                durationMinutes={duration}
+                onChange={(newSlot, newDur) => {
+                  setTimeSlot(newSlot);
+                  setDuration(newDur);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="border border-white/20 p-2.5 bg-white/5 flex items-center justify-between text-xs">
+              <span className="opacity-70 uppercase font-bold text-[10px]">TIME ASSIGNMENT:</span>
+              <span className="font-mono text-white/80 font-bold">[ANYTIME // ALL-DAY SCRATCHPAD]</span>
+            </div>
+          )}
 
           {/* Details / Notes */}
           <div className="space-y-1">

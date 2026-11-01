@@ -4,6 +4,8 @@ export type DayCode = 'A-DAY' | 'B-DAY' | 'WEEKEND-SAT' | 'WEEKEND-SUN' | string
 
 export type TaskCategory = 'work' | 'workout' | 'leisure' | string;
 
+export type TaskType = 'timed_routine' | 'timed_note' | 'untimed_checklist' | 'untimed_note';
+
 export interface TaskItem {
   id: string;
   time: string;
@@ -18,6 +20,9 @@ export interface TaskItem {
   oneTimeDate?: string; // YYYY-MM-DD for one-time tasks
   highlight?: boolean;
   isCustom?: boolean;
+  taskType?: TaskType;
+  isCheckable?: boolean; // true for checkable, false for pure note
+  isUntimed?: boolean; // true for all-day untimed scratchpad items
 }
 
 export interface DaySchedule {
@@ -53,6 +58,7 @@ export interface DayTaskLog {
   isRepetitive: boolean;
   timeSlot?: string;
   details?: string;
+  taskType?: TaskType;
 }
 
 export interface DayLogRecord {

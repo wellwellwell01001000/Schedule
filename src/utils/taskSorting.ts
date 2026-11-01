@@ -83,8 +83,10 @@ export function parseStartTimeMinutes(timeStr?: string): number {
  */
 export function sortTasksByStartTime(tasks: TaskItem[]): TaskItem[] {
   return [...tasks].sort((a, b) => {
-    const timeA = parseStartTimeMinutes(a.time);
-    const timeB = parseStartTimeMinutes(b.time);
+    const timeStrA = a.taskType === 'timed_note' && (!a.time || a.time.toUpperCase() === 'ANYTIME') ? '14:00' : a.time;
+    const timeStrB = b.taskType === 'timed_note' && (!b.time || b.time.toUpperCase() === 'ANYTIME') ? '14:00' : b.time;
+    const timeA = parseStartTimeMinutes(timeStrA);
+    const timeB = parseStartTimeMinutes(timeStrB);
     return timeA - timeB;
   });
 }
