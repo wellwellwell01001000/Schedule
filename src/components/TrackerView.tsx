@@ -1969,8 +1969,8 @@ export function TrackerView({
                         className="py-2.5 my-1 flex items-center gap-2 font-mono group"
                       >
                         <div className="h-px bg-white/40 flex-grow" />
-                        <div className="flex flex-wrap items-center gap-2 px-3 py-1 bg-black border border-white/50 text-xs shrink-0">
-                          <span className="font-bold text-white bg-white/20 border border-white/40 px-1.5 py-0.5 text-[10px]">
+                        <div className="flex flex-wrap items-center gap-2 px-3 py-1 bg-black text-white border border-white/60 text-xs shrink-0 shadow-sm font-mono">
+                          <span className="font-bold text-black bg-white border border-white px-1.5 py-0.5 text-[10px]">
                             {noticeDisplayTime}
                           </span>
                           <span className="text-white/40 font-bold">//</span>
@@ -1984,20 +1984,20 @@ export function TrackerView({
                                 — {task.details}
                               </span>
                             )}
-                          <span className="text-[9px] uppercase border border-white/20 px-1 py-0 text-white/50">
+                          <span className="text-[9px] uppercase border border-white/30 px-1 py-0 text-white/70">
                             {getCategoryLabel(task.category)}
                           </span>
                           <div className="flex items-center gap-1.5 ml-1 border-l border-white/20 pl-2">
                             <button
                               onClick={(e) => handleOpenEditModal(task, e)}
-                              className="text-[10px] text-white/70 hover:text-white uppercase font-bold cursor-pointer"
+                              className="text-[10px] text-white/60 hover:text-white uppercase font-bold cursor-pointer"
                               title="Edit milestone notice"
                             >
                               [EDIT]
                             </button>
                             <button
                               onClick={(e) => handleRequestDelete(task, e)}
-                              className="text-[10px] text-white/70 hover:text-white uppercase font-bold cursor-pointer"
+                              className="text-[10px] text-white/60 hover:text-red-400 uppercase font-bold cursor-pointer"
                               title="Delete milestone notice"
                             >
                               [DEL]

@@ -135,6 +135,17 @@ export function Header({
           >
             [3] _TASK_TIME_AUDIT
           </button>
+
+          <button
+            onClick={() => setActiveView('habits')}
+            className={`px-3 py-1 text-xs font-bold transition-none cursor-pointer border ${
+              activeView === 'habits'
+                ? 'bg-white text-black border-white'
+                : 'border-white/40 text-white/80 hover:border-white hover:text-white bg-black'
+            }`}
+          >
+            [4] _HABIT_STREAKS
+          </button>
         </nav>
 
         <div className="flex items-center gap-2">

@@ -45,7 +45,30 @@ export interface MetricComparison {
   why: string;
 }
 
-export type ActiveTab = 'tracker' | 'hierarchy' | 'task_audit';
+export type ActiveTab = 'tracker' | 'hierarchy' | 'task_audit' | 'habits';
+
+export interface HabitItem {
+  id: string;
+  title: string;
+  category: TaskCategory;
+  targetDaysPerWeek: number; // 1 to 7 days per week
+  frequency?: string; // deprecated legacy field
+  description?: string;
+  createdAt: string; // YYYY-MM-DD
+}
+
+export interface HabitStats {
+  currentStreak: number; // cumulative days across consecutive qualifying weeks
+  bestStreak: number;
+  totalCompletions: number;
+  completionRate30d: number;
+  currentWeekCompleted: number;
+  targetDaysPerWeek: number;
+  isTargetMetThisWeek: boolean;
+  historyTrail7d: { dateStr: string; dayLabel: string; completed: boolean }[];
+  historyTrail30d: { dateStr: string; completed: boolean }[];
+  isCompletedToday: boolean;
+}
 
 // Hierarchical Log structures
 export interface DayTaskLog {

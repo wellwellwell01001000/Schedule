@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { TrackerView } from './components/TrackerView';
 import { HierarchicalMetricsView } from './components/HierarchicalMetricsView';
 import { TaskTimeAuditView } from './components/TaskTimeAuditView';
+import { HabitTrackerView } from './components/HabitTrackerView';
 import { BackupManagerModal } from './components/BackupManagerModal';
 import { SystemWalkthroughModal } from './components/SystemWalkthroughModal';
 import { RoutineTemplatesModal } from './components/RoutineTemplatesModal';
@@ -285,10 +286,11 @@ export default function App() {
         return;
       }
 
-      // Navigation: Tracker, Hierarchy, Audit
+      // Navigation: Tracker, Hierarchy, Audit, Habits
       if (isMatchingKey(e.key, shortcuts.nav_tracker)) setActiveView('tracker');
       if (isMatchingKey(e.key, shortcuts.nav_hierarchy)) setActiveView('hierarchy');
       if (isMatchingKey(e.key, shortcuts.nav_audit)) setActiveView('task_audit');
+      if (e.key === '4') setActiveView('habits');
 
       // Jump to Today
       if (isMatchingKey(e.key, shortcuts.jump_today)) {
@@ -412,6 +414,10 @@ export default function App() {
               onRefresh={handleRefreshHistory}
               onUpdateSchedules={handleUpdateSchedules}
             />
+          )}
+
+          {activeView === 'habits' && (
+            <HabitTrackerView />
           )}
         </main>
 

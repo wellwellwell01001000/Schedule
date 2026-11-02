@@ -96,9 +96,9 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white bg-white/10 px-1.5 py-0.5 border border-white/30">
-                    {formatKeyDisplay(cfg.nav_tracker)} / {formatKeyDisplay(cfg.nav_hierarchy)} / {formatKeyDisplay(cfg.nav_audit)}
+                    {formatKeyDisplay(cfg.nav_tracker)} / {formatKeyDisplay(cfg.nav_hierarchy)} / {formatKeyDisplay(cfg.nav_audit)} / 4
                   </span>
-                  <span className="text-white/80">Tracker / Hierarchy / Audit</span>
+                  <span className="text-white/80">Tracker / Hierarchy / Audit / Habits</span>
                 </div>
               </div>
             </div>
